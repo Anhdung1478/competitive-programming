@@ -14,7 +14,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .api import PolygonApi
-from .config import Config, PolygonError, resolve_local_path
+from .config import Config, PolygonError, resolve_local_path, unexpanded_explanation
 
 mcp = FastMCP("polygon")
 
@@ -72,7 +72,7 @@ def _read_source(
     if content and path:
         raise PolygonError(f"Pass either {what} or path, not both.")
     if path:
-        resolved = resolve_local_path(path, config.root)
+        resolved = resolve_local_path(path, config.root, config.unexpanded)
         try:
             return resolved.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -112,22 +112,39 @@ async def polygon_whoami() -> dict[str, Any]:
     Lists the problems the key can see and summarises them, which is the
     cheapest call that proves the key, the secret and the clock are all good.
     Call it first when any other tool fails, before re-reading its error.
+
+    `unexpanded_variables` names every variable that reached the server as a
+    literal `${NAME}` — the MCP client's placeholder, left in place because
+    the variable was missing from the environment Claude Code started in.
+    Those count as unset, and the explanation leads the error, because the
+    usual fix ("set the variable") is exactly what the operator believes they
+    already did.
     """
+    unexpanded = list(config.unexpanded)
     status: dict[str, Any] = {
         "ok": True,
         "base_url": config.base_url,
         "credentials_configured": config.has_credentials,
         "path_reads_allowed_under": str(config.root) if config.root else None,
+        "unexpanded_variables": unexpanded,
     }
     if not config.has_credentials:
+        missing = "No Polygon credentials."
+        if unexpanded:
+            missing += " " + unexpanded_explanation(unexpanded)
         return {
             **status,
             "ok": False,
-            "error": "No Polygon credentials. Generate a key at Polygon → "
+            "error": missing + " Generate a key at Polygon → "
             "Settings → API keys and set POLYGON_API_KEY and "
             "POLYGON_API_SECRET for this server.",
             "method": "problems.list",
         }
+    if unexpanded:
+        # The credentials made it through, so the check can go ahead, but a
+        # root or a tuning knob silently falling back to its default is
+        # still worth saying out loud.
+        status["warning"] = unexpanded_explanation(unexpanded)
     try:
         problems = await api.call("problems.list") or []
     except Exception as error:

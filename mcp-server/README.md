@@ -257,6 +257,15 @@ in this repository. Standalone, it is:
 uvx --from /path/to/competitive-programming/mcp-server polygon-mcp
 ```
 
+**Troubleshooting: `Incorrect API key` although the key is exported.** The
+`.mcp.json` entries are `${POLYGON_API_KEY}`-style placeholders, expanded from
+the environment Claude Code was *launched* from. A variable exported later —
+in another terminal, or in a `~/.bashrc` the launching shell never read — is
+not there, and the server receives the literal text `${POLYGON_API_KEY}`. The
+server treats such a value as unset, and `polygon_whoami` lists it under
+`unexpanded_variables`. The fix is to export the variables in the shell that
+starts Claude Code (or its profile) and restart Claude Code.
+
 ## The path guard
 
 Every tool that uploads a file takes either `content=` (the text inline) or

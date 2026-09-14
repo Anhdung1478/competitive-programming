@@ -10,6 +10,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `LICENSE` (MIT). The plugin and marketplace manifests and the MCP server's `pyproject.toml` now declare it too.
 - `NOTICE`, crediting the space-dark editorial theme to nudetiger.
 
+### Changed
+
+- The Polygon MCP server retries HTTP 429 with backoff, honouring
+  `Retry-After`. `polygon_whoami` reports environment variables that reached
+  the server as literal `${NAME}` placeholders, which means they were unset
+  when Claude Code launched.
+
 ## [0.7.0] - 2026-09-06
 
 Nine pull requests (#11-#19) adopted ideas from the

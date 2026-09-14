@@ -9,6 +9,11 @@ existing client. Two things in here are worth knowing before changing them:
 * **A retry is a new request, not a replay.** The signature commits to `time`,
   and Polygon refuses anything more than five minutes off its clock, so the
   second attempt is signed again from scratch.
+* **Being told to slow down is not the same as being down.** A 5xx or a
+  dropped connection gets one quick retry; an HTTP 429 gets several, spaced by
+  `Retry-After` when Polygon sends one and by a doubling backoff when it does
+  not. A scripted batch of `problem.saveTest` calls is exactly what trips the
+  limiter, and a single 1s retry lands inside the same window and fails too.
 """
 
 from __future__ import annotations
@@ -73,6 +78,30 @@ PLAIN_TEXT_METHODS = frozenset(
 )
 
 RETRY_STATUS = frozenset({500, 502, 503, 504})
+
+# Rate limiting has its own budget, separate from the one retry above: four
+# attempts in all, i.e. up to three waits. Without a `Retry-After` the waits
+# are 2s, 4s, 8s — long enough to clear a per-second limiter, short enough
+# that a tool call still returns inside a minute. A `Retry-After` is honoured
+# but capped, because a header asking for an hour would otherwise hang the
+# tool call with no visible reason.
+RATE_LIMITED_STATUS = 429
+RATE_LIMIT_ATTEMPTS = 4
+RATE_LIMIT_BASE_DELAY = 2.0
+MAX_RETRY_DELAY = 60.0
+
+
+def rate_limit_delay(response: httpx.Response, retry: int) -> float:
+    """Seconds to wait before rate-limit retry number `retry` (1-based).
+
+    Only the integer-seconds form of `Retry-After` is read. The HTTP-date form
+    is legal but would mean trusting our clock against Polygon's, and falling
+    back to the exponential schedule is a perfectly good answer for it.
+    """
+    header = response.headers.get("Retry-After", "").strip()
+    if header.isdigit():
+        return min(float(header), MAX_RETRY_DELAY)
+    return min(RATE_LIMIT_BASE_DELAY * 2 ** (retry - 1), MAX_RETRY_DELAY)
 
 
 def wire_value(value: Any) -> str:
@@ -193,7 +222,13 @@ class PolygonApi:
         client = await self.client()
         write = method in WRITE_METHODS
 
-        for attempt in (0, 1):
+        # Two independent budgets rather than one attempt counter: a 429 in
+        # the middle of a batch should not use up the retry a later 503 is
+        # owed, and a blip before the limiter kicks in should not shorten the
+        # rate-limit backoff.
+        transient_retries = 1
+        rate_limit_retries = 0
+        while True:
             await self._pace()
             # Re-signed per attempt: the first signature's `time` may already
             # be stale by the time the backoff has elapsed.
@@ -206,7 +241,8 @@ class PolygonApi:
             except httpx.TimeoutException:
                 # Never `str(error)` an httpx exception: its text carries the
                 # request URL, and for a GET that URL carries `apiKey`.
-                if attempt == 0:
+                if transient_retries:
+                    transient_retries -= 1
                     await self._sleep(1.0)
                     continue
                 raise PolygonError(
@@ -215,7 +251,8 @@ class PolygonApi:
                     method,
                 ) from None
             except httpx.HTTPError:
-                if attempt == 0:
+                if transient_retries:
+                    transient_retries -= 1
                     await self._sleep(1.0)
                     continue
                 raise PolygonError(
@@ -224,12 +261,26 @@ class PolygonApi:
                     method,
                 ) from None
 
-            if response.status_code in RETRY_STATUS and attempt == 0:
+            if response.status_code == RATE_LIMITED_STATUS:
+                if rate_limit_retries < RATE_LIMIT_ATTEMPTS - 1:
+                    rate_limit_retries += 1
+                    await self._sleep(rate_limit_delay(response, rate_limit_retries))
+                    continue
+                # Composed by hand, like every other message here, and it says
+                # what to do: the limiter is per account, so the only lever
+                # the caller has is sending fewer requests per second.
+                raise PolygonError(
+                    f"Polygon rate-limited {method} (HTTP 429) on "
+                    f"{RATE_LIMIT_ATTEMPTS} attempts in a row and the call was "
+                    "given up. Wait a minute, then continue more slowly — e.g. "
+                    "raise POLYGON_MIN_INTERVAL for this server.",
+                    method,
+                )
+            if response.status_code in RETRY_STATUS and transient_retries:
+                transient_retries -= 1
                 await self._sleep(1.0)
                 continue
             return self._unwrap(method, response)
-
-        raise PolygonError(f"Polygon call {method} exhausted its retry.", method)
 
     def _unwrap(self, method: str, response: httpx.Response) -> Any:
         """Turn one HTTP response into a `result`, or raise `PolygonError`."""
