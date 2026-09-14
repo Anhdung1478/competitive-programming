@@ -21,9 +21,11 @@ Ship a finished package to [Polygon](https://polygon.codeforces.com) through
 this plugin's **own** bundled MCP server. The upload mirrors what
 `problem.json` and the files on disk already say, and a package that is not
 finished goes back to a sibling skill rather than being patched up on the way
-out. **The one file this skill writes is `polygon.json`** — the record of
-which Polygon problem the package owns. It writes nothing else, and nothing
-in it edits `problem.json`, the statement, the tests or the solutions.
+out. **The one file this skill writes into the package is `polygon.json`** — the
+record of which Polygon problem the package owns. What it assembles on the
+way lives in `$SCRATCH`, or in a staging directory under the server's
+readable root that is removed after the run. Nothing in it edits
+`problem.json`, the statement, the tests or the solutions.
 
 **This skill runs only when asked for.** Every other setting skill is part of
 a pipeline that reaches an end; this one starts after that end, publishes to
@@ -51,9 +53,15 @@ BASE="<the path from this skill's own 'Base directory for this skill' line>"
 PLUGIN_ROOT="$BASE/../.."
 PROBLEM="<absolute path to the problem directory you are uploading>"
 TESTLIB="$(bash "$PLUGIN_ROOT/tools/bootstrap_testlib.sh")"
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/polygon-upload.XXXXXX")"
 cd "$PLUGIN_ROOT"
 PREFS="$(python3 -m tools.preferences)"
 ```
+
+`$SCRATCH` holds everything this run assembles that is not package data —
+the statement fields, the recovered test manifest. It is outside `$PROBLEM`
+on purpose. When the harness already gives you a scratch directory, a fresh
+subdirectory of it works just as well.
 
 `$PREFS` is the effective `preferences.toml` as JSON — the standing answers
 to the questions this pipeline would otherwise put to a human on every
@@ -62,10 +70,13 @@ value of `"ask"` as the file declining to decide: that one is genuinely
 open, so ask it. Anything said in this conversation still wins over the
 file, for this problem only.
 
-The keys this skill reads: `polygon.statement_language` (which language the
-statement goes up as), `polygon.notify_on_commit` (whether the commit emails
-the problem's other authors), `polygon.grant_codeforces_read` (whether to
-hand the `codeforces` login read access at the end).
+The keys this skill reads: `polygon.name_prefix` (prepended to
+`problem.json`'s `name` to form the Polygon problem name),
+`polygon.statement_language` (the language the statement is expected to be
+in; Phase 3 asks when the `.tex` is in another),
+`polygon.notify_on_commit` (whether the commit emails the problem's other
+authors), `polygon.grant_codeforces_read` (whether to hand the `codeforces`
+login read access at the end).
 
 Every `python3 -m tools.*` command below is a module inside `tools/`, only
 importable with `PLUGIN_ROOT` as the working directory — `cd` there first, or
@@ -143,22 +154,29 @@ writing it costs nothing.
 
 ## Phase 1 — create, and record where it went
 
-1. `polygon_whoami()` — proves the key, the secret and the clock.
-2. `polygon_problems_list(name=<problem.json name>)`. A live problem with
-   that name and no `polygon.json` in the package means someone else already
+The **Polygon name** is `polygon.name_prefix` followed by `problem.json`'s
+`name` (the ASCII slug): with a prefix of `qhh-` and a name of `annex`, it
+is `qhh-annex`. It is computed here and never written back into
+`problem.json`. The human title is the statement's `name` in Phase 3, and
+the two are not the same thing.
+
+1. `polygon_whoami()` — proves the key, the secret and the clock. Note its
+   `path_reads_allowed_under`: every `path=` below must lie under it.
+2. `polygon_problems_list(name=<Polygon name>)`. A live problem with that
+   name and no `polygon.json` in the package means someone else already
    created it, or a previous run failed after create and before recording.
    **Stop and report the id** — do not adopt it silently and do not create a
    second.
-3. `polygon_problem_create(name=<problem.json name>)`. The Polygon name is
-   `problem.json`'s `name`, the ASCII slug; the human title is the
-   statement's `name` in Phase 3, and they are not the same thing.
+3. `polygon_problem_create(name=<Polygon name>)`.
 4. **Record it, immediately.** `problem.create` returns `id` and `owner` and
-   **no address**, so ask the user for the problem's URL from their browser
-   and write all three to `$PROBLEM/polygon.json`:
+   no address. The problem's page is
+   `https://polygon.codeforces.com/edit-start?problemId=<id>`, so build the
+   URL from the id — there is no need to ask the user — and write all three
+   to `$PROBLEM/polygon.json`:
 
 ```bash
 python3 -c "import sys;from tools.polygon_ref import PolygonRef,save;save(sys.argv[1],PolygonRef(int(sys.argv[2]),sys.argv[3],sys.argv[4]))" \
-  "$PROBLEM" 123456 "<owner, from the create result>" "<url, from the user>"
+  "$PROBLEM" 123456 "<owner, from the create result>" "https://polygon.codeforces.com/edit-start?problemId=123456"
 ```
 
 `owner` is whatever the create result says — never a name from this skill,
@@ -182,24 +200,69 @@ For file IO, pass `io.input` and `io.output` verbatim.
 
 ## Phase 3 — statement
 
-`polygon_save_statement(problem_id, lang=<polygon.statement_language>, …)`,
-with the text taken from the package's `.tex`, in that language. Polygon's
-markup, not the vnolymp macros: `$$$x$$$` for inline math, `$$…$$` for
-display math — never `\[…\]`.
+`polygon_save_statement(problem_id, lang=<the .tex's language>, …)`, with the
+text taken from the package's `.tex` and rewritten into Polygon's markup.
+The `.tex` language is the option vnolymp was loaded with, such as
+`[english]` or `[vietnamese]`. It should equal `polygon.statement_language`.
+**When the two differ, ask before saving anything.** The choice is to upload
+the `.tex` as it stands, in its own language, or to stop so
+`writing-statements` can translate it. This skill never translates, just as
+it never repairs a package.
+
+`format` is the value `tools.problem_meta` resolves: the explicit key, or,
+without one, more than one subtask reads as `"oi"` and one (or none) reads
+as `"icpc"`.
+
+### Statement markup on Polygon
+
+**Read [`references/polygon-statement-markup.md`](references/polygon-statement-markup.md)
+before writing a field.** It is the upload convention. Codeforces renders
+the statement to HTML with a converter that supports a short fixed list of
+text-mode commands, so a statement whose PDF builds can still render broken
+in the HTML. The essentials:
+
+- **Delimiters:** `$x$` inline, `$$x$$` display. `$$$x$$$` belongs to
+  problems created before 1 Jun 2021 — never write it for a new one — and
+  `\[…\]` is never supported.
+- **No formula inside a text command** (`\emph{… $k$ …}`) and **no text
+  command inside a formula** (`$\texttt{…}$`, `$\text{…}$`, `$\mathrm{…}$`,
+  `$\operatorname{…}$`). Each formula is balanced on its own.
+- **`\emph` renders as underline** on Polygon, and vnolymp's `\emph` means
+  italics. Convert every `\emph{…}` to `\textit{…}` as part of the rewrite;
+  the linter accepts `\emph`, so it will not prompt you to.
 
 | package | Polygon field |
 |---|---|
 | the title in the statement's language | `name` |
 | story and task | `legend` |
 | `\InputFile` | `input` |
+| `\Constraints` | `input`, appended after a blank line — Polygon has no constraints field |
 | `\OutputFile` | `output` |
-| the subtask table, `format == "oi"` only | `scoring` |
-| `\Explanation` | `notes` |
+| the subtask table, `format == "oi"` only | `scoring`, as a `tabular` built from `problem.json` |
+| `\Explanation`, then `\Note` | `notes` |
 
-Samples do **not** go in `legend` or `notes`; they arrive in Phase 6 as tests
-marked for the statement. For `format == "icpc"`, leave `scoring` out
-entirely. Figures the statement includes go up with
-`polygon_save_statement_resource`.
+Samples do **not** go in any field; they arrive in Phase 6 as tests marked
+for the statement. For `format == "icpc"`, leave `scoring` out entirely.
+Figures go up first with `polygon_save_statement_resource` and are then
+referenced by name.
+
+Write the fields as one JSON object to `$SCRATCH/polygon-statement.json`.
+Its keys are exactly the `polygon_save_statement` sections the package fills
+(`name`, `legend`, `input`, `output`, `scoring`, `notes`) and nothing else;
+`name` is plain text with no `\` and no `$`. Then lint it:
+
+```bash
+python3 -m tools.cf_statement_lint "$SCRATCH/polygon-statement.json"
+```
+
+It must exit 0 before `polygon_save_statement` is called. On exit 1, fix
+the field it names and run it again. Fix the JSON, not the package's `.tex`
+— the PDF is reviewed and correct. Once it lints clean, the strings go to
+the tool unchanged: no edit after the last lint.
+
+**On a re-sync**, rebuild the JSON from the `.tex` every time and save it
+again. It is cheap, and a statement that has not changed simply becomes part
+of a commit that reports "No changes".
 
 ## Phase 4 — checker, validator, generators
 
@@ -211,22 +274,57 @@ terminal mid-session changes nothing, because the server process is already
 running without it. Pass `content=` inline only for something genuinely small
 — a few KB — never as a way around the guard.
 
-1. **Checker.** `checker.kind == "stock"` → `polygon_set_checker(problem_id,
+**When `$PROBLEM` is not under `path_reads_allowed_under`** (a root of `/tmp`,
+say), every `path=` in Phases 4–6 is refused. The one-time fix is to point
+`POLYGON_MCP_ROOT` at a directory that contains your problems, then restart
+Claude Code. Until then, stage each file under the root for its call and
+remove the staging directory when the run ends:
+
+```bash
+ROOT="<path_reads_allowed_under, from polygon_whoami>"
+STAGE="$(mktemp -d "$ROOT/polygon-upload.XXXXXX")"
+cp "<file>" "$STAGE/"      # then call the tool with path="$STAGE/<basename>"
+rm -rf "$STAGE"            # once, after the last upload
+```
+
+1. **`testlib.h`, first, always** — as `file_type="resource"`,
+   `name="testlib.h"`, from the exact file the local pipeline compiled
+   against: `$TESTLIB/testlib.h`. Every new Polygon problem ships a stock
+   `testlib.h` resource. The package's generators call
+   `registerGen(argc, argv, 2)`, which preparing-tests requires and which
+   exists only in the fork `bootstrap_testlib.sh` installs. A problem left
+   on Polygon's copy fails its verified build, and the error names a
+   solution rather than the generator —
+   `sol-main.cpp got FL on tests#3 which violates tag(s): solution tag MAIN`,
+   or `RJ on tests#4` for a time-limit solution. **FL or RJ on the first
+   generated tests of a verified build means this step was skipped.**
+   Uploading it replaces Polygon's copy, so validator, checker, generators
+   and Polygon's answers all build against the header the matrix was run
+   with. The file is ~225 KB, far past what `content=` is for, and it lives
+   in the cache, outside the readable root, so it always goes through the
+   staging directory above:
+
+   ```bash
+   STAGE="${STAGE:-$(mktemp -d "$ROOT/polygon-upload.XXXXXX")}"
+   cp "$TESTLIB/testlib.h" "$STAGE/testlib.h"
+   # polygon_save_file(problem_id, file_type="resource", name="testlib.h", path="$STAGE/testlib.h")
+   ```
+
+2. **Checker.** `checker.kind == "stock"` → `polygon_set_checker(problem_id,
    "std::<checker.name>.cpp")`; the package spells stock names bare (`ncmp`,
    `wcmp`, `rcmp6`) and Polygon spells them `std::ncmp.cpp`. `custom` →
    `polygon_save_file(file_type="source", name=<checker.name>, path=…)`
    first, then `polygon_set_checker` with that same name.
-2. **`files/constraints.h`** as `file_type="resource"` — the generated header
+3. **`files/constraints.h`** as `file_type="resource"` — the generated header
    the validator includes. A resource file is placed beside the sources at
    compile time, which is exactly what `#include "constraints.h"` needs.
    Upload it **before** the validator so that compile finds it, and never
    edit the package's own `files/validator.cpp` to work around it.
-3. **Validator.** `polygon_save_file(file_type="source",
+4. **Validator.** `polygon_save_file(file_type="source",
    name="validator.cpp", path=…)`, then
    `polygon_set_validator(problem_id, "validator.cpp")`.
-4. **Generators.** Every `files/gen-*.cpp` as `file_type="source"` under its
-   own name. Nothing binds them; the script names them. `testlib.h` is
-   Polygon's own — do not upload it.
+5. **Generators.** Every `files/gen-*.cpp` as `file_type="source"` under its
+   own name. Nothing binds them; the script names them.
 
 ## Phase 5 — solutions, with the tags they were measured at
 
@@ -258,29 +356,90 @@ every solution and fails when `OK` times out. Exactly one solution carries
 
 ## Phase 6 — tests, then samples last
 
-**Tests go up as the package's generator script, not as uploaded files.**
-Each line is the exact `argv` that produced the corresponding
-`tests/<group>/NN.in` — the generators are pure functions of their command
-line, so the same invocation reproduces the same bytes forever.
+Polygon's indices follow the package: groups in `problem.json` subtask
+order, `NN.in` in numeric order within each group, after the samples.
+**Generated tests go up as script lines, and hand-made tests as manual
+uploads of the package's own files.** A script line is the exact `argv` that
+produced its `tests/<group>/NN.in`: generators are pure functions of their
+command line, so the same invocation reproduces the same bytes forever.
 
-**If the exact argv is not recoverable, STOP.** Say plainly that the suite
-has to be regenerated with its commands recorded and then re-reviewed, and
-end the run. Do not guess an invocation, and do not regenerate anything here:
-a generator run inside this skill produces test data nothing has validated,
-reviewed, or run the matrix against.
+1. **Samples that duplicate a test.** Polygon refuses a second test with the
+   same input (`testInput: Test coincides with test #N.`). Check every
+   sample against the suite:
 
-1. Count the samples, `S`. Their indices are `1..S`, so every script line
-   ends `> S+1`, `> S+2`, … — explicit numbers, never `> $`, and no `#`
-   comment lines, which Polygon's script parser rejects.
-2. `polygon_save_script(problem_id, "tests", source=<the whole script>)`. It
-   replaces the script entirely; there is no appending.
-3. **Samples last**, as manual tests at `1..S`:
+   ```bash
+   for s in "$PROBLEM"/ex*.in; do
+     dup=""; for t in "$PROBLEM"/tests/*/*.in; do cmp -s "$s" "$t" && { dup="$t"; break; }; done
+     echo "$(basename "$s") ${dup:-unique}"
+   done
+   ```
+
+   A **unique** sample is uploaded as its own manual test. A **duplicate** is
+   not uploaded at all: the test it equals is marked for the statement
+   instead, in step 5. Count the unique samples, `S`. They take indices
+   `1..S`, and the package's tests start at `S+1`.
+
+2. **Recover every test's origin:**
+
+   ```bash
+   python3 -m tools.recover_test_argv "$PROBLEM" "$SCRATCH/argv" --offset <S>
+   ```
+
+   The tool copies the package into `$SCRATCH`, runs `build_tests.sh` there
+   with the generators wrapped, and keeps an invocation only if it
+   reproduces the original bytes twice. It never writes into `$PROBLEM` and
+   never changes what gets uploaded. It writes
+   `$SCRATCH/argv/tests-manifest.json`, one entry per test (`index`,
+   `group`, `file`, `kind` of `gen` or `manual`, and the generator and args
+   for `gen`), and `$SCRATCH/argv/script.txt`, already offset by `S`.
+   **Exit 1 is a STOP:** `build_tests.sh` does not reproduce the suite on
+   disk, so the package is not what its own script says. Send it back to
+   `preparing-tests`, and do not regenerate or patch anything here.
+   Exit 0 with `manual` entries is normal.
+
+3. `polygon_save_script(problem_id, "tests", source=<script.txt, verbatim>)`.
+   It replaces the script entirely; there is no appending. Every line ends
+   in an explicit index, never `> $`, and there are no `#` comment lines,
+   which Polygon's script parser rejects.
+
+4. **Hand-made tests**, one call each, for every manifest entry of kind
+   `manual`:
+   `polygon_save_test(problem_id, "tests", test_index=<index + S>,
+   path=<$PROBLEM/<file>>)`. A manual test is a first-class test, not a
+   gap: it is the package's own validated file, uploaded byte for byte.
+
+5. **Samples last.** Each unique sample:
    `polygon_save_test(problem_id, "tests", test_index=i, path=<the .in>,
+   use_in_statements=true)` for `i` in `1..S`. Each duplicate: mark the
+   test it equals, and send nothing else —
+   `polygon_save_test(problem_id, "tests", test_index=<that test's index + S>,
    use_in_statements=true)`. Leave `output_for_statements` unset — the shown
    answer is then the one Polygon computes from `MA`, which is the point of
-   Phase 5's ordering. Samples carry no group and no points.
-4. Read back with `polygon_tests(problem_id, no_inputs=true)`: indices `1..S`
-   marked `useInStatements`, one test per script line above them.
+   Phase 5's ordering. Unique samples carry no group and no points.
+
+   Polygon shows statement samples in index order. When a duplicate makes a
+   sample appear in a different position than its `exK` number, the
+   `notes` field must refer to samples in Polygon's order. Re-save the
+   statement if Phase 3 numbered them the vnolymp way.
+
+6. Read back with `polygon_tests(problem_id, no_inputs=true)`, one index
+   per line of the manifest plus `S`. Script tests come back
+   `manual: false` with a `scriptLine`, and hand-made tests come back
+   `manual: true`, at exactly the manifest's indices. `useInStatements` is
+   set on the `S` unique samples and on each duplicate's test. Polygon does not document marking a
+   script-generated test for the statement, so the readback decides, not
+   the call's `ok`. If a duplicate's test flipped to `manual: true` or lost
+   its `scriptLine`, repair it before committing:
+   - drop that test's line from `script.txt` and save the script again;
+   - upload the sample itself as the manual test at that index, with
+     `use_in_statements=true`. Its bytes equal the test's, so it is the same
+     test;
+   - for `oi`, give it that test's group and points in Phase 7;
+   - read back again.
+
+**One call at a time.** Tests go up sequentially, never as a parallel
+batch. The server paces its requests and backs off on HTTP 429, but calls
+fired together against one account still hit Polygon's rate limit.
 
 ## Phase 7 — groups and points, `format == "oi"` only
 
@@ -302,12 +461,13 @@ For `format == "oi"`:
 3. **Points first**, one call per test:
    `polygon_save_test(problem_id, "tests", test_index=…, test_points=…)` —
    `test_points` and nothing else. `subtasks[].points` is split across that
-   subtask's tests to sum **exactly** to the subtask's points. This is the
+   subtask's tests — the manifest entries of that `group`, at Polygon index
+   `index + S` — to sum **exactly** to the subtask's points. This is the
    only route to per-test points: neither `problem.setTestGroup` nor
    `problem.saveTestGroup` takes any.
 4. **Then the groups**, one call per subtask:
    `polygon_set_test_group(problem_id, "tests", test_group=<subtask id>,
-   test_indices=[…])`. It names a group and indices and nothing else, so
+   test_indices=[…])`, with the same manifest indices, `index + S`. It names a group and indices and nothing else, so
    there is no field through which it could disturb a script-generated
    test's input — which is why groups go through it rather than through
    `polygon_save_test`. Groups **after** points, deliberately: this call
@@ -323,7 +483,8 @@ For `format == "oi"`:
    `polygon_tests(problem_id, no_inputs=true)` — `no_inputs` because a real
    suite's inputs are megabytes and none of this needs them. Every index the
    script produced must still come back with **`manual: false` and its
-   `scriptLine`**, alongside the `group` and `points` you set. Those two
+   `scriptLine`**, and every hand-made test with `manual: true`, alongside
+   the `group` and `points` you set. Those two
    fields are the discriminator: a generated test that an edit clobbered
    into a manual *add* flips `manual` to true and loses its `scriptLine`, and
    nothing later in the run would say so. If one has, **stop** — do not
@@ -356,8 +517,16 @@ python3 -c "import sys;from dataclasses import replace;from tools.polygon_ref im
 Then `polygon_build_package(problem_id, verify=true)` and poll
 `polygon_packages` until `state` leaves `PENDING`/`RUNNING`. `verify=true` is
 what makes the Phase 5 tags mean something — it runs every solution on every
-test and checks each claim holds. A `FAILED` package's `comment` says why;
-report it rather than committing again over the top.
+test and checks each claim holds. A build takes minutes: **keep polling
+inside this run** until the state is final. Do not end the turn with "check
+again later" — a run that stops there leaves an upload nobody verified. A
+`FAILED` package's `comment` says why; report it rather than committing
+again over the top, and read an FL or RJ on the first generated tests as
+Phase 4 step 1.
+
+The API cannot show how the statement rendered. After a `READY` build, give
+the user the problem's URL and ask them to open the statement preview once.
+The linter catches the constructs known to break, not every one.
 
 ## Phase 9 — access
 
@@ -373,16 +542,41 @@ key belongs to, not about the package. Say that and stop; do not describe a
 sequence of clicks in a web UI you cannot see. When the preference is false,
 say the step was skipped and which preference skipped it.
 
+## Several problems, and contests
+
+**Several problems at once.** One agent per problem is fine. Each agent
+works on its own package and its own `polygon.json`, and none of them
+touches another's problem. Every agent still shares one account's rate
+limit, so each one uploads its tests sequentially (Phase 6). An agent that
+stops part-way leaves a problem with a `polygon.json` and no
+`committed_at`. The next run finds that record in Phase 0 and re-syncs it,
+rather than creating a second problem.
+
+**Contests are not part of this skill.** The server wraps no contest method,
+and the public Polygon API has none that creates a contest or adds problems
+to one, as far as this skill knows. When
+the user asks for a contest, finish uploading the problems. Report each
+Polygon name, id and URL, and say the contest itself is assembled by hand
+in Polygon's web UI.
+
 ## Done
 
 - [ ] Both preconditions run fresh in this conversation: `tools.package_status`
       printed `complete`, `tools.review_checks` exited 0
 - [ ] `$PROBLEM/polygon.json` carries the id and owner the server reported
-      and the URL the user gave, and `polygon_ref.load` reads it back
+      and the `edit-start?problemId=<id>` URL, and `polygon_ref.load` reads
+      it back
+- [ ] Statement uploaded in the `.tex`'s language (asked first if it differs
+      from the preference), fields linted clean by `tools.cf_statement_lint`
+      before they were saved, and the user asked to open the preview
+- [ ] The package's `testlib.h` uploaded as a resource before any source;
+      the staging directory under the server's root removed afterwards
 - [ ] Limits, statement, checker, validator, generators and every solution
       uploaded, each solution tagged from its own `@tag`, exactly one `MA`
-- [ ] Tests are the package's script with recoverable argv; samples are
-      indices `1..S`, marked for the statement, with no uploaded answers
+- [ ] Tests follow `tools.recover_test_argv`'s manifest: script lines for
+      `gen`, manual uploads for `manual`; unique samples at `1..S` and
+      duplicate samples marked on the test they equal, all with no uploaded
+      answers
 - [ ] Groups and points enabled iff `format == "oi"`, one group per subtask
       id, points summing to 100
 - [ ] `polygon_commit` reported `committed: true`; `committed_at` recorded in

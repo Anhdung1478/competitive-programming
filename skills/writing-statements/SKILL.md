@@ -219,8 +219,30 @@ intended solution — an explanation that argues is an editorial leaking
 into the statement.
 
 Keep `\begin{problem}`'s key list to bare numbers for `time` and `memory`;
-the package owns the units. Everything else about the key list is in
+the package owns the units. A fractional limit is `time = 2.5` with a
+decimal point, not `time = {2,5}` for a Vietnamese decimal comma. The panel
+then reads "2.5 giây", and `tools.review_checks` reads the same number
+`problem.json` publishes. Everything else about the key list is in
 `AUTHORING.md` §2.
+
+## When the statement will also go to Polygon
+
+Codeforces renders a Polygon statement to HTML with a converter that
+supports far less TeX than the PDF build. Authoring with that in mind costs
+nothing here, and it saves rewriting at upload time. Every construct below
+builds a clean vnolymp PDF, and each one broke the HTML of a real upload:
+
+- no formula inside a text command: `\emph{sau $k$ lần}` — close the command
+  before the `$`;
+- no text command inside a formula: `$\texttt{aabaa}$`, `$\text{lên}$`,
+  `$\mathrm{dist}(u,v)$` — keep the words outside the `$…$`;
+- one formula per mathematical object: `$\{(2,3), (3,1)\}$`, never a set
+  split across several `$…$` spans;
+- italics with `\textit`, since Polygon renders `\emph` as underline.
+
+The full convention, and the linter that checks it, belong to
+`uploading-to-polygon` (`references/polygon-statement-markup.md`). This
+skill still owns the prose, and the `.tex` is never rewritten at upload.
 
 Use `standalone` for a single problem and `booklet` with `\contest{}` plus
 `\vnolympcover` for several. When the source gives no contest name, date,

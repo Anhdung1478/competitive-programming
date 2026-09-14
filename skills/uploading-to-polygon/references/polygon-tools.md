@@ -43,9 +43,9 @@ clock are all good. Call it first when any other tool fails.
 | `polygon_save_general_description(problem_id, description)` | `problem.saveGeneralDescription` |
 
 `problem.create` returns `id`, `owner`, `name`, `deleted`, `favourite` and
-`accessType` — and **no address**. There is no documented way to build a
-working Polygon link from the id, which is why the skill asks for the URL
-rather than composing one.
+`accessType` — and **no address**. The problem's page is
+`https://polygon.codeforces.com/edit-start?problemId=<id>`, which is the URL
+the skill records.
 
 `polygon_save_tags` replaces the whole set, so read `polygon_tags` first if
 you mean to add one.
@@ -74,6 +74,11 @@ not enough, and that is the one failure worth predicting here.
 Only `lang` is required; every section left empty is not sent, so an existing
 one survives. `interaction` is accepted only for a problem already marked
 interactive.
+
+The API accepts any text and reports nothing about how it will render. What
+the Codeforces HTML converter accepts — `$x$`, not `$$$x$$$`, and the
+text-mode command whitelist — is in
+[polygon-statement-markup.md](polygon-statement-markup.md).
 
 ## Sources, checker, validator
 
@@ -120,6 +125,15 @@ every test's answer by running it.
 | `polygon_save_test_group(problem_id, testset, group, points_policy=, feedback_policy=, dependencies=)` | `problem.saveTestGroup` |
 
 `polygon_save_script` replaces the whole script — it is not a line appended.
+
+`polygon_save_test` with a `test_input` or `path` byte-identical to an
+existing test fails with `testInput: Test coincides with test #N.` — which is
+how a sample that duplicates a package test first shows up. Mark test `N`
+with `use_in_statements` instead of uploading the sample again.
+
+Polygon rate-limits an account. The server backs off and retries an HTTP 429
+a few times, but a batch of calls fired in parallel can still exhaust that,
+so save tests one at a time.
 
 Two tools carry three routes into a test's group and points, and they are
 not interchangeable:

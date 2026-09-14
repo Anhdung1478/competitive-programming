@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tomllib
 from dataclasses import asdict, dataclass
@@ -58,6 +59,11 @@ SUBTASKS_POLICY_VALUES = ("suggest", "user", "none", "ask")
 MULTI_TEST_POLICY_VALUES = ("ask", "never", "always")
 SUM_CONSTRAINTS_VALUES = ("ask", "never")
 STATEMENT_LANGUAGE_VALUES = ("vietnamese", "english")
+# Polygon problem names are lowercase latin letters, digits and dashes. The
+# prefix is held to the same alphabet (and may be empty, meaning "no
+# convention"), so prefix + problem.json's `name` is a name Polygon accepts
+# whenever `name` itself is.
+POLYGON_NAME_PREFIX_PATTERN = r"[a-z0-9-]*"
 
 
 class PreferencesError(ValueError):
@@ -103,6 +109,7 @@ class PolygonPrefs:
     statement_language: str
     notify_on_commit: bool
     grant_codeforces_read: bool
+    name_prefix: str
 
 
 @dataclass(frozen=True)
@@ -119,17 +126,33 @@ class Preferences:
 
 @dataclass(frozen=True)
 class _Key:
-    """What one key accepts: a closed set, a bounded integer, or a boolean."""
+    """What one key accepts: a closed set, a bounded integer, a boolean, or a
+    free string constrained by a pattern.
 
-    kind: str                    # "enum" | "int" | "bool"
+    `str` exists for the one answer that is not a choice between a few
+    values: `polygon.name_prefix` is whatever naming convention the user's
+    Polygon account follows (`qhh-`, `qhhoj-`, ...). It is still validated,
+    not taken on trust — the pattern is what Polygon itself accepts in a
+    problem name, so a prefix it would refuse is caught when the file loads
+    rather than at `problem.create`, half-way through an upload.
+    """
+
+    kind: str                    # "enum" | "int" | "bool" | "str"
     values: tuple[str, ...] = ()  # kind == "enum"
     minimum: int = 0              # kind == "int"
+    pattern: str = ""             # kind == "str": a `re.fullmatch` pattern
+    describe: str = ""            # kind == "str": the pattern, in words
 
     def allowed(self) -> str:
         if self.kind == "enum":
             return " | ".join(repr(v) for v in self.values)
         if self.kind == "int":
             return f"an integer >= {self.minimum}"
+        if self.kind == "str":
+            # Words, not the regex: the reader is hand-editing a TOML file,
+            # and `^[a-z0-9-]*$` asks them to decode something the sentence
+            # can just say.
+            return f"a string of {self.describe}"
         return "true or false"
 
 
@@ -164,6 +187,10 @@ SCHEMA: dict[str, tuple[type, dict[str, _Key]]] = {
         "statement_language": _Key("enum", values=STATEMENT_LANGUAGE_VALUES),
         "notify_on_commit": _Key("bool"),
         "grant_codeforces_read": _Key("bool"),
+        "name_prefix": _Key(
+            "str", pattern=POLYGON_NAME_PREFIX_PATTERN,
+            describe="lowercase latin letters, digits and dashes "
+                     "(empty allowed)"),
     }),
 }
 
@@ -193,6 +220,18 @@ def _value(raw, spec: _Key, path: Path, what: str):
         if raw < spec.minimum:
             raise PreferencesError(
                 f"{path}: {what} is {raw}, expected {spec.allowed()}")
+        return raw
+    if spec.kind == "str":
+        if not isinstance(raw, str):
+            raise PreferencesError(
+                f"{path}: {what} is {raw!r} (TOML {_type_name(raw)}), "
+                f"expected {spec.allowed()}")
+        # `fullmatch`, not `match` with `^...$`: `$` also matches before a
+        # trailing newline, so `"qhh-\n"` would pass a `match` and reach
+        # Polygon as a name it rejects.
+        if re.fullmatch(spec.pattern, raw) is None:
+            raise PreferencesError(
+                f"{path}: {what} is {raw!r}, expected {spec.allowed()}")
         return raw
     if not isinstance(raw, str):
         raise PreferencesError(

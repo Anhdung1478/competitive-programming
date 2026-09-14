@@ -1644,3 +1644,127 @@ class TestMcpJsonRegistersBothServers(unittest.TestCase):
     def test_the_handshake_probe_is_run_against_both_servers(self):
         for script in ("cf-mcp", "polygon-mcp"):
             self.assertIn(f"uvx --from ./mcp-server {script}", self.README)
+
+
+class TestPolygonUploadFeedbackPins(unittest.TestCase):
+    """What the 2026-09-14 Trinity Force upload taught, pinned.
+
+    Five problems went to Polygon and four instructions in
+    `uploading-to-polygon` turned out to be wrong in practice: the stock
+    testlib does not have `registerGen(..., 2)`, `$$$` is the delimiter of a
+    renderer new problems no longer use, the URL can be built from the id,
+    and a hand-made test is not a reason to stop. Each wrong sentence is
+    listed literally, the way `RETIRED_CLAIMS` above lists the file-IO ones —
+    the failure being guarded is a revert, not a paraphrase.
+
+    The markup reference and the linter are two copies of one whitelist,
+    so the reference is checked against the linter's own constants rather
+    than against a third list typed here.
+    """
+
+    SKILL = "uploading-to-polygon"
+    MARKUP = SKILLS / SKILL / "references" / "polygon-statement-markup.md"
+
+    RETIRED_CLAIMS = (
+        "`testlib.h` is Polygon's own — do not upload it",
+        "`$$$x$$$` for inline math",
+        "ask the user for the problem's URL",
+        "If the exact argv is not recoverable, STOP",
+        "There is no documented way to build a working Polygon link",
+    )
+
+    def documents(self) -> dict[str, str]:
+        refs = SKILLS / self.SKILL / "references"
+        return {
+            "SKILL.md": skill_text(self.SKILL),
+            "polygon-tools.md": (refs / "polygon-tools.md").read_text(encoding="utf-8"),
+            "polygon-statement-markup.md": self.markup(),
+        }
+
+    def markup(self) -> str:
+        self.assertTrue(self.MARKUP.is_file(), f"{self.MARKUP} is missing")
+        text = self.MARKUP.read_text(encoding="utf-8")
+        self.assertGreater(len(text), 2000, f"{self.MARKUP} read back nearly empty")
+        return text
+
+    def test_no_document_carries_a_retired_upload_instruction(self):
+        for name, body in self.documents().items():
+            flat = flatten(body)
+            for claim in self.RETIRED_CLAIMS:
+                with self.subTest(document=name, claim=claim):
+                    self.assertTrue(
+                        claim not in flat,
+                        f"{name} still says {claim!r}, which the Trinity Force "
+                        f"upload proved wrong. See CHANGELOG [Unreleased].")
+
+    def test_phase_3_states_the_convention_and_points_at_the_reference(self):
+        body = flatten(skill_text(self.SKILL))
+        for phrase in ("### Statement markup on Polygon",
+                       "references/polygon-statement-markup.md",
+                       "`$x$` inline, `$$x$$` display",
+                       "`\\emph` renders as underline",
+                       "python3 -m tools.cf_statement_lint"):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(phrase in body,
+                                f"{self.SKILL} no longer states {phrase!r}")
+
+    def test_the_skill_uploads_the_packages_testlib(self):
+        body = flatten(skill_text(self.SKILL))
+        self.assertIn('`$TESTLIB/testlib.h`', body)
+        self.assertIn("registerGen(argc, argv, 2)", body)
+        self.assertIn("FL or RJ on the first generated tests", body)
+
+    def test_the_skill_runs_the_modules_it_names(self):
+        body = skill_text(self.SKILL)
+        for module in ("cf_statement_lint", "recover_test_argv"):
+            with self.subTest(module=module):
+                self.assertTrue((ROOT / "tools" / f"{module}.py").is_file(),
+                                f"tools/{module}.py is missing")
+                self.assertIn(f"python3 -m tools.{module}", body)
+
+    def test_every_linted_text_command_is_documented_in_the_reference(self):
+        # Imported here, not at module top: a broken linter should fail this
+        # test, not every test in the module.
+        from tools import cf_statement_lint
+        markup = self.markup()
+        for command in sorted(cf_statement_lint.TEXT_COMMANDS):
+            with self.subTest(command=command):
+                token = command if command.startswith("\\") else "\\" + command
+                self.assertTrue(
+                    token in markup,
+                    f"cf_statement_lint accepts {token} in text mode but "
+                    f"polygon-statement-markup.md does not list it")
+        for env in sorted(cf_statement_lint.ENVIRONMENTS):
+            with self.subTest(environment=env):
+                self.assertTrue(f"`{env}`" in markup,
+                                f"environment {env} is linted as supported "
+                                f"but not documented")
+
+    def test_the_reference_examples_of_breakage_are_what_the_linter_rejects(self):
+        from tools import cf_statement_lint
+        for bad in ("\\emph{sau $k$ lần}", "$P(5) = \\texttt{aabaa}$",
+                    "$\\text{lên } (0,+1)$", "$\\mathrm{dist}(u,v)$",
+                    "$\\{2$--$3, 3$--$1\\}$", "$$$x$$$"):
+            with self.subTest(source=bad):
+                errors = [f for f in cf_statement_lint.lint(bad)
+                          if f.severity == "error"]
+                self.assertTrue(errors, f"the linter accepts {bad!r}")
+
+    def test_writing_statements_carries_the_polygon_authoring_notes(self):
+        body = flatten(skill_text("writing-statements"))
+        self.assertIn("`time = 2.5`", body)
+        self.assertIn("## When the statement will also go to Polygon", body)
+
+
+class TestMcpJsonNeverBakesCodeforcesSecrets(unittest.TestCase):
+    """The polygon half of `.mcp.json` is pinned to `${NAME}` references
+    above; a published 0.6.0 build carried a literal Codeforces handle and
+    session cookie instead. Same pin, other server."""
+
+    def test_codeforces_env_is_placeholders_only(self):
+        env = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))["codeforces"]["env"]
+        self.assertTrue(env)
+        for name, reference in env.items():
+            with self.subTest(variable=name):
+                self.assertEqual(reference, "${%s}" % name,
+                                 "a literal value here would publish a secret")

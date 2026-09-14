@@ -42,9 +42,11 @@ class PolygonRefError(ValueError):
 class PolygonRef:
     """The Polygon problem a package has been uploaded to.
 
-    `url` is recorded rather than derived: `problem.create` answers with
-    `id`, `owner`, `name` and access type and no address at all, so there is
-    no documented way to build a working Polygon link out of the id.
+    `url` is recorded rather than recomputed on read: `problem.create`
+    answers with `id`, `owner`, `name` and access type and no address, and
+    the skill builds `https://polygon.codeforces.com/edit-start?problemId=<id>`
+    once, at record time. Storing it keeps the link a collaborator bookmarked
+    in the package's history even if Polygon's URL scheme later moves.
 
     `committed_at` is the timestamp of the last revision the upload skill
     committed, RFC 3339 with an explicit offset. A re-sync compares file
