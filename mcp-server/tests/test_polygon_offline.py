@@ -392,6 +392,63 @@ async def test_a_one_line_test_input_is_not_mistaken_for_json():
     ) == "5"
 
 
+async def test_a_429_is_retried_with_a_doubling_backoff_and_then_succeeds():
+    sleeps: list[float] = []
+    fake = FakePolygon((429, "slow down"), (429, "slow down"), ok("fine"))
+    _, api = make_api(fake, sleeps=sleeps)
+    assert await api.call("problem.saveTest", {"problemId": 1}) == "fine"
+    assert len(fake.calls) == 3
+    assert sleeps == [2.0, 4.0]
+    # Each attempt is signed afresh, as with the 5xx retry.
+    assert len({c.params["apiSig"] for c in fake.calls}) == 3
+
+
+async def test_a_429_honours_retry_after_and_caps_it():
+    sleeps: list[float] = []
+    replies = [
+        httpx.Response(429, headers={"Retry-After": "7"}, text="slow down"),
+        httpx.Response(429, headers={"Retry-After": "3600"}, text="slow down"),
+        httpx.Response(200, json={"status": "OK", "result": None}),
+    ]
+    config = Config(
+        api_key=API_KEY,
+        api_secret=API_SECRET,
+        base_url="https://polygon.test/api/",
+        min_interval=0.0,
+    )
+
+    async def record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    api = PolygonApi(
+        config,
+        transport=httpx.MockTransport(lambda request: replies.pop(0)),
+        sleep=record_sleep,
+    )
+    await api.call("problem.saveTest", {"problemId": 1})
+    assert sleeps == [7.0, 60.0]
+
+
+async def test_a_persistent_429_gives_up_saying_it_was_rate_limited():
+    sleeps: list[float] = []
+    fake = FakePolygon((429, "slow down"))
+    _, api = make_api(fake, sleeps=sleeps)
+    with pytest.raises(PolygonError) as caught:
+        await api.call("problem.info", {"problemId": 1})
+    message = str(caught.value)
+    assert len(fake.calls) == 4 and sleeps == [2.0, 4.0, 8.0]
+    assert caught.value.method == "problem.info"
+    assert "problem.info" in message and "rate-limited" in message
+    assert API_KEY not in message and "polygon.test" not in message
+
+
+async def test_a_429_does_not_use_up_the_retry_a_503_is_owed():
+    fake = FakePolygon((429, "slow"), (503, "busy"), ok("fine"))
+    _, api = make_api(fake)
+    assert await api.call("problem.info", {"problemId": 1}) == "fine"
+    assert len(fake.calls) == 3
+
+
 async def test_a_call_without_credentials_never_reaches_the_network():
     fake = FakePolygon(ok(None))
     config, api = make_api(fake)
@@ -441,6 +498,70 @@ def test_no_root_refuses_every_path(tmp_path: Path):
     target.write_text("int main(){}")
     with pytest.raises(PolygonError, match="POLYGON_MCP_ROOT is not set"):
         resolve_local_path(str(target), None)
+
+
+def test_an_unexpanded_root_is_refused_with_the_reason(tmp_path: Path):
+    target = tmp_path / "sol.cpp"
+    target.write_text("int main(){}")
+    with pytest.raises(PolygonError, match=r"literally as \$\{POLYGON_MCP_ROOT\}"):
+        resolve_local_path(str(target), None, ("POLYGON_MCP_ROOT",))
+
+
+# ------------------------------------------- placeholders the client left in
+
+
+def test_a_placeholder_key_counts_as_unset_and_is_recorded(monkeypatch):
+    monkeypatch.setenv("POLYGON_API_KEY", "${POLYGON_API_KEY}")
+    monkeypatch.setenv("POLYGON_API_SECRET", " ${POLYGON_API_SECRET} ")
+    monkeypatch.delenv("POLYGON_MCP_ROOT", raising=False)
+    config = Config.from_env()
+    assert config.api_key == "" and config.api_secret == ""
+    assert config.has_credentials is False
+    assert config.unexpanded == ("POLYGON_API_KEY", "POLYGON_API_SECRET")
+
+
+def test_a_placeholder_root_becomes_none(monkeypatch):
+    monkeypatch.setenv("POLYGON_API_KEY", API_KEY)
+    monkeypatch.setenv("POLYGON_API_SECRET", API_SECRET)
+    monkeypatch.setenv("POLYGON_MCP_ROOT", "${POLYGON_MCP_ROOT}")
+    monkeypatch.setenv("POLYGON_TIMEOUT", "${POLYGON_TIMEOUT}")
+    config = Config.from_env()
+    assert config.root is None
+    assert config.timeout == 30.0
+    assert config.has_credentials is True
+    assert config.unexpanded == ("POLYGON_MCP_ROOT", "POLYGON_TIMEOUT")
+
+
+def test_a_value_merely_containing_a_dollar_brace_is_kept(monkeypatch):
+    monkeypatch.setenv("POLYGON_API_KEY", "abc${X}def")
+    config = Config.from_env()
+    assert config.api_key == "abc${X}def"
+    assert "POLYGON_API_KEY" not in config.unexpanded
+
+
+async def test_whoami_explains_placeholders_the_client_left_in(polygon):
+    fake = polygon(ok([]))
+    server.config.api_key = ""
+    server.config.api_secret = ""
+    server.config.unexpanded = ("POLYGON_API_KEY", "POLYGON_API_SECRET")
+    result = await server.polygon_whoami()
+    assert result["ok"] is False
+    assert result["credentials_configured"] is False
+    assert result["unexpanded_variables"] == ["POLYGON_API_KEY", "POLYGON_API_SECRET"]
+    assert "literally as ${POLYGON_API_KEY}, ${POLYGON_API_SECRET}" in result["error"]
+    assert "restart Claude Code" in result["error"]
+    assert "another terminal" in result["error"]
+    assert fake.calls == []
+
+
+async def test_whoami_warns_about_a_placeholder_root_but_still_checks(polygon):
+    fake = polygon(ok([]))
+    server.config.unexpanded = ("POLYGON_MCP_ROOT",)
+    result = await server.polygon_whoami()
+    assert result["ok"] is True
+    assert result["unexpanded_variables"] == ["POLYGON_MCP_ROOT"]
+    assert "${POLYGON_MCP_ROOT}" in result["warning"]
+    assert len(fake.calls) == 1
 
 
 def test_a_missing_file_inside_the_root_says_so(tmp_path: Path):
