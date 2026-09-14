@@ -42,7 +42,8 @@ competitive-programming/
 │   ├── writing-statements/SKILL.md
 │   ├── reviewing-problems/SKILL.md
 │   ├── creating-problems/SKILL.md
-│   ├── uploading-to-polygon/SKILL.md (+ references/polygon-tools.md)
+│   ├── uploading-to-polygon/SKILL.md (+ references/polygon-tools.md,
+│   │                                    references/polygon-statement-markup.md)
 │   └── writing-editorials/SKILL.md  (+ references/vi-glossary.md,
 │                                        references/themes/space-dark.html)
 ├── tools/                    # Python pipeline the setting skills drive
@@ -50,6 +51,8 @@ competitive-programming/
 │   ├── scan_solutions.py  matrix_core.py  run_matrix.py  box_pool.py
 │   ├── package_status.py  review_checks.py  bootstrap_testlib.py  preferences.py
 │   ├── polygon_ref.py          # polygon.json: which Polygon problem a package owns
+│   ├── cf_statement_lint.py    # rejects TeX the Codeforces HTML statement renderer breaks on
+│   ├── recover_test_argv.py    # proves each test's generator argv, for the Polygon script
 │   ├── bootstrap_testlib.sh   # thin wrapper: cd's to the plugin root, execs the .py
 │   └── tests/                # unittest suite, see Checks below
 └── mcp-server/               # both MCP servers (one Python project, two scripts)

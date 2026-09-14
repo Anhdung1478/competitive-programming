@@ -53,6 +53,24 @@ class TestParseTex(unittest.TestCase):
         self.assertEqual(parse_tex(TEX.replace("time   = 1,", "time = 1.5,"))["time"],
                          1.5)
 
+    def test_a_braced_decimal_comma_time_is_read_as_a_float(self):
+        # Field report: `time = {2,5}` is how a statement renders "2,5 giây".
+        # The brace-aware splitter keeps it whole as "2,5", and
+        # `float("2,5")` raised — false drift "no `time` key".
+        self.assertEqual(
+            parse_tex(TEX.replace("time   = 1,", "time = {2,5},"))["time"], 2.5)
+
+    def test_only_the_single_comma_decimal_form_is_read(self):
+        for value in ("{2,5,1}", "{1,000,000}", "{,5}", "{2,}"):
+            with self.subTest(value=value):
+                self.assertIsNone(parse_tex(
+                    TEX.replace("time   = 1,", f"time = {value},"))["time"])
+
+    def test_the_decimal_comma_is_read_only_for_time(self):
+        # memory is whole megabytes; `{256,5}` is not a limit.
+        self.assertIsNone(parse_tex(
+            TEX.replace("memory = 256,", "memory = {256,5},"))["memory"])
+
     def test_a_non_numeric_time_is_still_none(self):
         self.assertIsNone(parse_tex(TEX.replace("time   = 1,", "time = soon,"))["time"])
 
@@ -85,9 +103,34 @@ class TestCheck(unittest.TestCase):
         self.assertIn("2.5 s", issues[0])
         self.assertIn("1.5 s", issues[0])
 
+    def test_a_matching_decimal_comma_time_limit_is_not_drift(self):
+        problem = dataclasses.replace(PROBLEM, time_ms_published=2500)
+        self.assertEqual(
+            check(problem, TEX.replace("time   = 1,", "time = {2,5},")), [])
+
+    def test_time_drift_names_the_edit_on_both_sides(self):
+        # Field report: 2000 -> 2500 in problem.json, and the finding said
+        # nothing about which file to change.
+        problem = dataclasses.replace(PROBLEM, time_ms_published=2500)
+        issue, = check(problem, TEX.replace("time   = 1,", "time = 2,"))
+        self.assertTrue(issue.startswith(
+            "time: problem.json publishes 2.5 s, statement says 2 s"), issue)
+        self.assertIn("`time = 2.5`", issue)
+        self.assertIn("\\begin{problem}", issue)
+        self.assertIn("`limits.time_ms_published` to 2000", issue)
+
+    def test_a_whole_second_suggestion_is_written_bare(self):
+        issue, = check(PROBLEM, TEX.replace("time   = 1,", "time = 2,"))
+        self.assertIn("`time = 1`", issue)
+        self.assertIn("`limits.time_ms_published` to 2000", issue)
+
     def test_detects_memory_mismatch(self):
         problems = check(PROBLEM, TEX.replace("memory = 256", "memory = 512"))
         self.assertIn("memory", problems[0])
+        self.assertTrue(problems[0].startswith(
+            "memory: problem.json says 256 MB, statement says 512 MB"))
+        self.assertIn("`memory = 256`", problems[0])
+        self.assertIn("`limits.memory_mb` to 512", problems[0])
 
     def test_detects_subtask_points_mismatch(self):
         problems = check(PROBLEM, TEX.replace(r"\subtask{40}", r"\subtask{30}"))

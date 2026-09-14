@@ -61,10 +61,17 @@ include_obviously_wrong = false
 
 [polygon]
 # Defaults for the Polygon upload. The upload only runs when you ask for it.
-# Which language the statement is written in on Polygon.
+# The language the package's `.tex` is expected to be written in, and so the
+# language the statement goes up as. The upload asks when the `.tex` is in
+# another one; it never translates.
 statement_language = "vietnamese"
 # Whether committing a revision emails the problem's watchers.
 notify_on_commit = false
 # Whether to share the problem with the `codeforces` login (read access)
 # after a commit, via `problem.setAccess`.
 grant_codeforces_read = true
+# Prepended to problem.json's `name` to form the Polygon problem name, for an
+# account whose problems follow a naming convention: "qhh-" turns `flight`
+# into `qhh-flight`. Polygon names are lowercase latin letters, digits and
+# dashes, so the prefix is held to the same; "" means no prefix.
+name_prefix = ""

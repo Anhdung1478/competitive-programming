@@ -106,6 +106,25 @@ class TestRun(unittest.TestCase):
         self.assertTrue(findings)
         self.assertEqual(findings[0].severity, "high")
 
+    def test_time_drift_finding_says_which_file_to_edit(self):
+        # Field report: after raising the TL in problem.json the finding
+        # named the disagreement but not the edit. Both sides are named,
+        # since which one is intended is the setter's call.
+        tex = self.dir / "mini.tex"
+        tex.write_text(
+            "\\begin{problem}[input = stdin, output = stdout,\n"
+            "  time = 9, memory = 256,\n]{Mini}\n"
+            "\\begin{subtasks}\\subtask{100}{x}\\end{subtasks}\n"
+            "\\end{problem}\n", encoding="utf-8")
+        time_findings = [f for f in run(self.dir, tex_path=tex)
+                         if f.kind == "constraint-drift"
+                         and f.what.startswith("time:")]
+        self.assertEqual(len(time_findings), 1)
+        what = time_findings[0].what
+        self.assertIn("statement says 9 s", what)
+        self.assertIn("\\begin{problem}", what)
+        self.assertIn("limits.time_ms_published", what)
+
     def test_invocation_json_with_holes_as_string_does_not_raise(self):
         (self.dir / "invocation.json").write_text(json.dumps(
             {"schema": 1, "holes": "not_a_list", "mismatches": []}), encoding="utf-8")

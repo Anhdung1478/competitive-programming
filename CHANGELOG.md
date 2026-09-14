@@ -3,15 +3,62 @@
 All notable changes to this plugin are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.8.0] - 2026-09-14
+
+Acts on the field report from uploading five problems to Polygon, kept in
+`docs/superpowers/decisions/2026-09-14-polygon-upload-feedback.md`.
 
 ### Added
 
 - `LICENSE` (MIT). The plugin and marketplace manifests and the MCP server's `pyproject.toml` now declare it too.
 - `NOTICE`, crediting the space-dark editorial theme to nudetiger.
+- **Statement markup convention for Polygon**: `uploading-to-polygon` now has
+  a "Statement markup on Polygon" section and
+  `references/polygon-statement-markup.md`. They cover:
+  - which vnolymp section goes into which Polygon field;
+  - `$x$` and `$$x$$` as the delimiters, with `$$$x$$$` as legacy markup
+    only;
+  - the text-mode command whitelist from Polygon's TeX manual;
+  - the constructs that broke Codeforces' HTML during a real upload;
+  - the scoring table and figures.
+- **`tools/cf_statement_lint.py`**: lints Polygon statement fields before
+  they are saved. It rejects `$$$`, formulas inside text commands, text
+  commands inside formulas, math spans that don't balance, and commands
+  outside the whitelist in Polygon's TeX manual. Try it:
+  `python3 -m tools.cf_statement_lint fields.json`.
+- **`tools/recover_test_argv.py`**: runs `build_tests.sh` on a copy of the
+  package with the generators wrapped. It keeps a test's argv only if that
+  argv reproduces the original bytes twice, and writes a manifest plus a
+  Polygon script. Every other test is reported as manual, with the reason.
+- `polygon.name_prefix` preference, prepended to `problem.json`'s `name` to
+  form the Polygon problem name.
 
 ### Changed
 
+- `uploading-to-polygon` uploads the package's own `testlib.h` as a resource
+  before any source. Generators use `registerGen(argc, argv, 2)`, which
+  Polygon's stock testlib lacks, and a verified build then failed with FL/RJ
+  blamed on a solution.
+- `uploading-to-polygon` records the URL as
+  `https://polygon.codeforces.com/edit-start?problemId=<id>` and no longer
+  asks the user for it.
+- Phase 6 follows `tools.recover_test_argv`'s manifest: generated tests go up
+  as script lines and hand-made tests as manual uploads. Before, a
+  hand-made test stopped the upload.
+- A sample identical to a package test is no longer uploaded twice, which
+  Polygon refuses; the test it equals is marked for the statement.
+- The upload skill now says to save tests one at a time, keep polling a
+  build until it finishes, and assemble contests by hand, since the server
+  wraps no contest method.
+- `tools.drift_check` (and so `tools.review_checks`) reads a statement's
+  `time = {2,5}` as 2.5 s. Before, it reported a false "no `time` key". A
+  time or memory drift finding now also names both fixes: the `.tex` key, or
+  `limits.time_ms_published` / `limits.memory_mb` in `problem.json`.
+- `run_matrix`'s refusal to stage on tmpfs, or on a missing or read-only
+  directory, now ends with a concrete fix line:
+  `mkdir -p /var/tmp/<problem> && export RUN_MATRIX_STAGE_DIR=...`.
+- `writing-statements` recommends `time = 2.5` over `time = {2,5}` and lists
+  the constructs to avoid when a statement will also go to Polygon.
 - The Polygon MCP server retries HTTP 429 with backoff, honouring
   `Retry-After`. `polygon_whoami` reports environment variables that reached
   the server as literal `${NAME}` placeholders, which means they were unset
