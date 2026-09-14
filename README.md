@@ -42,7 +42,8 @@ competitive-programming/
 │   ├── writing-statements/SKILL.md
 │   ├── reviewing-problems/SKILL.md
 │   ├── creating-problems/SKILL.md
-│   ├── uploading-to-polygon/SKILL.md (+ references/polygon-tools.md)
+│   ├── uploading-to-polygon/SKILL.md (+ references/polygon-tools.md,
+│   │                                    references/polygon-statement-markup.md)
 │   └── writing-editorials/SKILL.md  (+ references/vi-glossary.md,
 │                                        references/themes/space-dark.html)
 ├── tools/                    # Python pipeline the setting skills drive

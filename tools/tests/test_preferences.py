@@ -74,6 +74,7 @@ class TestShippedFile(unittest.TestCase):
         self.assertEqual(prefs.polygon.statement_language, "vietnamese")
         self.assertFalse(prefs.polygon.notify_on_commit)
         self.assertTrue(prefs.polygon.grant_codeforces_read)
+        self.assertEqual(prefs.polygon.name_prefix, "")
 
     def test_format_default_is_the_package_set_plus_ask(self):
         # Pinned to the constant rather than to a second copy typed here: a
@@ -238,6 +239,32 @@ class TestStrictness(unittest.TestCase):
             self.mutate('policy = "ask"\n# When multi-test',
                         'policy = "ask_when_lucky"\n# When multi-test'),
             "multi_test.policy", "ask_when_lucky")
+
+    def test_a_polygon_name_prefix_in_polygons_alphabet_loads(self):
+        # The field report's own conventions.
+        for prefix in ("qhh-", "qhhoj-", "c0ntest-2026-"):
+            with self.subTest(prefix=prefix):
+                prefs = parse(self.mutate('name_prefix = ""',
+                                          f'name_prefix = "{prefix}"'),
+                              self.PATH)
+                self.assertEqual(prefs.polygon.name_prefix, prefix)
+
+    def test_a_polygon_name_prefix_outside_polygons_alphabet_is_refused(self):
+        # Uppercase, underscore, space, a trailing newline (which `^...$`
+        # with `re.match` would have let through), and non-latin letters —
+        # each a name Polygon's `problem.create` would reject mid-upload.
+        for bad in ("QHH-", "qhh_", "qhh -", "qhh-\\n", "đề-"):
+            with self.subTest(prefix=bad):
+                self.fails_with(
+                    self.mutate('name_prefix = ""', f'name_prefix = "{bad}"'),
+                    "polygon.name_prefix",
+                    "lowercase latin letters, digits and dashes")
+
+    def test_a_polygon_name_prefix_must_be_a_string(self):
+        self.fails_with(self.mutate('name_prefix = ""', "name_prefix = 1"),
+                        "polygon.name_prefix", "integer", "a string of")
+        self.fails_with(self.mutate('name_prefix = ""', "name_prefix = false"),
+                        "polygon.name_prefix", "boolean")
 
     def test_not_valid_toml(self):
         self.fails_with("[format\ndefault = 1", "not valid TOML")
