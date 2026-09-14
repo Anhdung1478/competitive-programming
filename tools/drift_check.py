@@ -132,6 +132,29 @@ def parse_tex(text: str) -> dict:
         except (KeyError, ValueError, TypeError):
             return None
 
+    def as_seconds(raw):
+        # A Vietnamese statement writes 2.5 s as "2,5 giây", and an author
+        # who wants that rendered writes `time = {2,5}` — the braces are
+        # required, because keyval splits the key list on a bare comma.
+        # `_parse_keylist_braceaware` keeps the braced value whole and
+        # strips the braces, so what arrives here is "2,5"; `float("2,5")`
+        # raises, and `check()` then reported "no `time` key", false drift
+        # naming the wrong cause for a key that was present and correct.
+        # Only the one-comma decimal form is read: "2,5,1" or "1,000" are not
+        # a decimal comma anyone means, and guessing at them would let a
+        # malformed limit through.
+        #
+        # The *unbraced* `time = 2,5` cannot be rescued here and is not
+        # tried: the splitter (like keyval itself, in LaTeX) has already
+        # read it as `time = 2` plus a stray `5`, so the value is "2" by the
+        # time it arrives — and the statement LaTeX renders is wrong too.
+        if raw is not None and re.fullmatch(r"\d+,\d+", raw.strip()):
+            raw = raw.strip().replace(",", ".")
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            return None
+
     # Extract subtasks body and find subtask points only within it
     subtasks_body = _extract_subtasks_body(text_no_comments)
     subtask_points = [int(m.group("points")) for m in _SUBTASK.finditer(subtasks_body)]
@@ -145,7 +168,7 @@ def parse_tex(text: str) -> dict:
         # the one failure mode this tool cannot have. `check()` was already
         # comparing against a float with a 1e-9 tolerance, so the float was
         # what the rest of the module expected all along.
-        "time": as_number("time", float),
+        "time": as_seconds(keys.get("time")),
         # `memory` stays an int: vnolymp's memory key is whole megabytes,
         # and accepting "256.5 MB" would let a meaningless value through
         # rather than catching it.
@@ -156,23 +179,56 @@ def parse_tex(text: str) -> dict:
     }
 
 
+def _tex_seconds(seconds: float) -> str:
+    """How to write `seconds` as a vnolymp `time` value.
+
+    Always bare, with a decimal point for a fractional limit: `2.5`, not
+    `{2,5}`. `writing-statements` recommends the bare form, because it is the
+    one every reader of the key list — this module, a reviewer, the next
+    tool — parses without special-casing. `parse_tex` still accepts the
+    braced decimal comma an author may already have written, but the fix it
+    suggests should not steer anyone back toward it.
+    """
+    return f"{seconds:g}"
+
+
 def check(problem: Problem, tex_text: str) -> list[str]:
     tex = parse_tex(tex_text)
     issues: list[str] = []
 
+    # The limit drifts are the ones that arise from an *edit* — a TL raised
+    # in problem.json after a timing run, a statement retyped by hand — so
+    # the finding says which of the two files to change. Without that, the
+    # reader of "problem.json publishes 2.5 s, statement says 2 s" has to
+    # already know that the statement's side is the `time` key of
+    # `\begin{problem}` and problem.json's is `limits.time_ms_published`
+    # (not `time_ms_computed`, which is the measured figure and is never
+    # what the statement shows). Which side is *right* is not something
+    # this tool can know, so both edits are named, each conditioned on it.
+    # Appended after the existing text so the "time: problem.json publishes
+    # ..." prefix callers match on is unchanged.
     published_s = problem.time_ms_published / 1000
     if tex["time"] is None:
         issues.append("statement: no `time` key in \\begin{problem}")
     elif abs(tex["time"] - published_s) > 1e-9:
         issues.append(
             f"time: problem.json publishes {published_s:g} s, "
-            f"statement says {tex['time']:g} s"
+            f"statement says {tex['time']:g} s — if problem.json is right, "
+            f"set `time = {_tex_seconds(published_s)}` in the statement's "
+            f"\\begin{{problem}} key list; if the statement is right, set "
+            f"`limits.time_ms_published` to {round(tex['time'] * 1000)} in "
+            f"problem.json"
         )
 
     if tex["memory"] != problem.memory_mb:
         issues.append(
             f"memory: problem.json says {problem.memory_mb} MB, "
-            f"statement says {tex['memory']} MB"
+            f"statement says {tex['memory']} MB — if problem.json is right, "
+            f"set `memory = {problem.memory_mb}` in the statement's "
+            f"\\begin{{problem}} key list"
+            + (f"; if the statement is right, set `limits.memory_mb` to "
+               f"{tex['memory']} in problem.json"
+               if tex["memory"] is not None else "")
         )
 
     if tex["input"] != problem.input:

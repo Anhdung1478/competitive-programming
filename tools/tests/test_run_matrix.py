@@ -2793,6 +2793,47 @@ class TestStageBase(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("tmpfs", message)
         self.assertIn("RUN_MATRIX_STAGE_DIR", message)
+        # The fix is the last line, with a concrete value named after the
+        # problem directory — not only `$RUN_MATRIX_STAGE_DIR` mid-paragraph.
+        last = message.splitlines()[-1]
+        name = Path(__file__).parent.name
+        self.assertIn(f"RUN_MATRIX_STAGE_DIR=/var/tmp/{name}", last)
+        self.assertIn(f"mkdir -p /var/tmp/{name}", last)
+
+    def test_a_nonexistent_override_also_ends_with_the_concrete_fix(self):
+        # The workaround's own failure mode: pointing the variable at a
+        # /var/tmp directory that was never created.
+        with mock.patch.dict(os.environ,
+                             {run_matrix.STAGE_DIR_ENV: "/nonexistent/stage"}):
+            with self.assertRaises(run_matrix.MatrixError) as ctx:
+                run_matrix._stage_base(Path("/somewhere/flight"))
+        last = str(ctx.exception).splitlines()[-1]
+        self.assertIn("mkdir -p /var/tmp/flight", last)
+        self.assertIn("RUN_MATRIX_STAGE_DIR=/var/tmp/flight", last)
+
+    def test_main_prints_the_concrete_fix_for_a_problem_on_tmpfs(self):
+        # End to end through the CLI, since the field report was about what
+        # the user *saw*: `run()` loads problem.json and then reaches
+        # `_stage_base` before isolate, compilation or the box pool, so this
+        # is the message that fires for a problem under /tmp — exit 2,
+        # stderr only, the fix on its final line. The suite exports the
+        # override globally for its own fixtures, so it is removed here or
+        # it would mask the refusal.
+        err, out = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(run_matrix.STAGE_DIR_ENV, None)
+            with mock.patch.object(run_matrix, "_filesystem_type",
+                                   return_value="tmpfs"), \
+                    contextlib.redirect_stderr(err), \
+                    contextlib.redirect_stdout(out):
+                code = run_matrix.main(["run_matrix.py", str(FIXTURE),
+                                        "/nonexistent-testlib"])
+        self.assertEqual(code, 2)
+        self.assertEqual(out.getvalue(), "")
+        lines = err.getvalue().strip().splitlines()
+        self.assertTrue(lines[0].startswith("run_matrix: refusing to stage"),
+                        err.getvalue())
+        self.assertIn(f"RUN_MATRIX_STAGE_DIR=/var/tmp/{FIXTURE.name}", lines[-1])
 
     def test_env_override_wins_over_the_problem_directory(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH_ROOT) as override:

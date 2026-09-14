@@ -9,9 +9,25 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `LICENSE` (MIT). The plugin and marketplace manifests and the MCP server's `pyproject.toml` now declare it too.
 - `NOTICE`, crediting the space-dark editorial theme to nudetiger.
+- **`tools/cf_statement_lint.py`**: lints Polygon statement fields before
+  they are saved. It rejects `$$$`, formulas inside text commands, text
+  commands inside formulas, math spans that don't balance, and commands
+  outside the whitelist in Polygon's TeX manual. Try it:
+  `python3 -m tools.cf_statement_lint fields.json`.
+- **`tools/recover_test_argv.py`**: runs `build_tests.sh` on a copy of the
+  package with the generators wrapped. It keeps a test's argv only if that
+  argv reproduces the original bytes twice, and writes a manifest plus a
+  Polygon script. Every other test is reported as manual, with the reason.
 
 ### Changed
 
+- `tools.drift_check` (and so `tools.review_checks`) reads a statement's
+  `time = {2,5}` as 2.5 s. Before, it reported a false "no `time` key". A
+  time or memory drift finding now also names both fixes: the `.tex` key, or
+  `limits.time_ms_published` / `limits.memory_mb` in `problem.json`.
+- `run_matrix`'s refusal to stage on tmpfs, or on a missing or read-only
+  directory, now ends with a concrete fix line:
+  `mkdir -p /var/tmp/<problem> && export RUN_MATRIX_STAGE_DIR=...`.
 - The Polygon MCP server retries HTTP 429 with backoff, honouring
   `Retry-After`. `polygon_whoami` reports environment variables that reached
   the server as literal `${NAME}` placeholders, which means they were unset

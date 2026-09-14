@@ -456,17 +456,35 @@ def _stage_base(problem_dir: str | Path | None) -> Path:
     else:
         base, source = Path.cwd(), "the current working directory"
 
+    # Every refusal below ends with the fix as a runnable line of its own,
+    # with a concrete value in it. Field report: a problem drafted in a
+    # scratchpad under /tmp exited 2 before running anything, and the
+    # user found `RUN_MATRIX_STAGE_DIR=/var/tmp/<name>` by themselves. The
+    # variable *was* named, but only as `$RUN_MATRIX_STAGE_DIR` near the
+    # end of an 800-character single line whose first 600 characters
+    # explain cgroup accounting — the part a skim or a clipped terminal
+    # tail drops. A reader should be able to copy the last line and go.
+    # `/var/tmp` because it is the disk-backed, world-writable, survives-
+    # reboot temporary directory on most Linux (FHS), and the directory
+    # must already exist — `is_dir()` below refuses one that does not —
+    # hence the `mkdir -p`.
+    example_dir = f"/var/tmp/{Path(problem_dir).name if problem_dir is not None else '<problem-name>'}"
+    fix = (f"\nFix: mkdir -p {example_dir} && "
+           f"export {STAGE_DIR_ENV}={example_dir}  "
+           "(any existing, writable directory on a disk-backed filesystem "
+           "works; `df -T <dir>` shows the filesystem type)")
+
     if not base.is_dir():
         raise MatrixError(
             f"staging directory base {base} ({source}) is not a directory. "
             f"Set ${STAGE_DIR_ENV} to a writable directory on a disk-backed "
-            "filesystem."
+            "filesystem." + fix
         )
     if not os.access(base, os.W_OK | os.X_OK):
         raise MatrixError(
             f"staging directory base {base} ({source}) is not writable by "
             f"this process. Set ${STAGE_DIR_ENV} to a writable directory on "
-            "a disk-backed filesystem."
+            "a disk-backed filesystem." + fix
         )
 
     fstype = _filesystem_type(base)
@@ -481,7 +499,7 @@ def _stage_base(problem_dir: str | Path | None) -> Path:
             "at a 64 MB limit reported max-rss:1668 KB, cg-oom-killed:1). "
             f"Set ${STAGE_DIR_ENV} to a directory on a disk-backed "
             "filesystem. This driver does not fall back to /tmp, and does "
-            "not run with an accounting defect it can see."
+            "not run with an accounting defect it can see." + fix
         )
     return base
 
