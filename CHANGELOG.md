@@ -3,6 +3,41 @@
 All notable changes to this plugin are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] - 2026-09-22
+
+### Added
+
+- **Skill `calculating-difficulties`**: estimates what a finished, validated
+  problem would be rated on the Codeforces scale, into
+  `$PROBLEM/difficulty.md`. Opt-in and detached from the setting pipeline, the
+  same way `writing-editorials` is. The procedure is a prerequisite floor, a
+  placement against 2-3 real rated anchors, an era correction that discounts
+  an old anchor's printed label onto today's scale, adjustments capped at
+  `±300`, then a floor gate and a clamp. It ships
+  `references/tag-floors.md`, `references/anchors.md` (171 real Codeforces
+  problems with their API ratings and years) and the `calibration/` record.
+  - **Gated on evidence, not on a file existing.** It estimates only when
+    `python3 -m tools.package_status "$PROBLEM"` reports `[x] matrix` with
+    `holes 0, mismatches 0` and the `@tag main` solution expects `OK` on every
+    group. A stale `invocation.json`, or holes, means `not estimable` is
+    written instead of a guess.
+  - **Blind-calibrated**: MAE 210, 71% within ±200, signed bias +19, measured
+    against 48 held-out problems disjoint from the anchor table. That is what
+    earns the `± 300` interval it emits instead of a bare point estimate; the
+    round record and the pre-registered round 10 are in
+    `skills/calculating-difficulties/calibration/metrics.md`.
+
+### Changed
+
+- **`writing-editorials` defers to `difficulty.md` when it exists.** It used
+  to invent the `Difficulty` field and the `EXPECTED_RATING` slot free-hand on
+  every page. It now copies the calibrated number when one is there, and
+  leaves the field for the user when that file says `not estimable`. With no
+  `difficulty.md` it behaves exactly as before.
+- `.gitignore` excludes `.cache-cf-corpus/`, which
+  `calibration/fetch-corpus.py` writes to the repository root during a
+  calibration round.
+
 ## [0.8.0] - 2026-09-14
 
 Acts on the field report from uploading five problems to Polygon, kept in

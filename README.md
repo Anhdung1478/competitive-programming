@@ -1,11 +1,12 @@
 # competitive-programming
 
-Claude Code plugin for competitive programming: ten skills — two for solving
+Claude Code plugin for competitive programming: eleven skills — two for solving
 (one problem, one whole contest), seven for setting one (shaping the
 constraints, test data, solution validation, statement, package review,
-end-to-end orchestration, and the opt-in upload to Polygon), and one optional
-writeup skill that explains a finished problem to the contestants who could not
-solve it — plus two bundled MCP servers, one for Codeforces and one for
+end-to-end orchestration, and the opt-in upload to Polygon), and two optional
+skills detached from the pipeline: one that explains a finished problem to the
+contestants who could not solve it, and one that estimates what that problem
+would be rated — plus two bundled MCP servers, one for Codeforces and one for
 Polygon. This repository is also a **marketplace**, so it can be used in place
 or installed on another machine.
 
@@ -20,6 +21,7 @@ or installed on another machine.
 | Skill `reviewing-problems` | `competitive-programming:reviewing-problems` | Audits a finished problem package before it ships: mechanical checks (drift, unreached bounds, holes, checker/validator disagreement) via `tools/review_checks.py`, plus judgement checks (ambiguity, assumed definitions, unproven invariants) run fresh from the statement, recorded to `flags.json` |
 | Skill `creating-problems` | `competitive-programming:creating-problems` | The umbrella over the other five setting skills: drives a problem from an idea, finished or half-formed, to a Polygon-ready package end to end, gated phase by phase with machine-readable evidence from `tools/package_status.py` |
 | Skill `writing-editorials` | `competitive-programming:writing-editorials` | Writes a standalone HTML editorial for a solved problem — lore-stripped restatement, the derivation that reaches the intended solution, time complexity — into `$PROBLEM/editorial/editorial.html`. Opt-in and detached from the pipeline: it runs only when a conversation explicitly asks for one |
+| Skill `calculating-difficulties` | `competitive-programming:calculating-difficulties` | Estimates what a finished, validated problem would be rated on the Codeforces scale, into `$PROBLEM/difficulty.md`: a prerequisite floor, placement against real rated anchors, an era correction that discounts an old anchor's label onto today's scale, capped adjustments, and a confidence line. Gated on the invocation matrix having run clean; with no such evidence it records `not estimable` rather than guessing. Blind-calibrated, and it emits a `± 300` interval rather than a bare point estimate. Opt-in and detached, and the source `writing-editorials` reads its `Difficulty` field from |
 | Skill `uploading-to-polygon` | `competitive-programming:uploading-to-polygon` | Publishes a finished, reviewed package to Codeforces Polygon over the bundled `polygon` server: create, limits, statement, sources, solutions with their measured tags, the generator script and samples, subtask groups and points, commit and verified build, then read access for the coordinators. Opt-in — it runs only when asked for, never off the end of `creating-problems` |
 | MCP server `codeforces` | tools `cf_*` | Browse contest problems, read statements, submit solutions, poll verdicts |
 | MCP server `polygon` | tools `polygon_*` | Upload a finished package to Polygon: statement and resources, sources, solutions with their expected verdicts, script and manual tests, groups and points, commit and build, then grant a coordinator access to it |
@@ -44,8 +46,11 @@ competitive-programming/
 │   ├── creating-problems/SKILL.md
 │   ├── uploading-to-polygon/SKILL.md (+ references/polygon-tools.md,
 │   │                                    references/polygon-statement-markup.md)
-│   └── writing-editorials/SKILL.md  (+ references/vi-glossary.md,
-│                                        references/themes/space-dark.html)
+│   ├── writing-editorials/SKILL.md  (+ references/vi-glossary.md,
+│   │                                    references/themes/space-dark.html)
+│   └── calculating-difficulties/SKILL.md  (+ references/tag-floors.md,
+│                                             references/anchors.md,
+│                                             calibration/)
 ├── tools/                    # Python pipeline the setting skills drive
 │   ├── problem_meta.py  flags.py  gen_constraints_header.py  drift_check.py
 │   ├── scan_solutions.py  matrix_core.py  run_matrix.py  box_pool.py
@@ -208,7 +213,7 @@ directory is not importable`.
 ```bash
 cd <this repo>
 claude plugin validate . --strict                 # manifests
-claude plugin details competitive-programming     # inventory: 10 skills, 2 MCP servers
+claude plugin details competitive-programming     # inventory: 11 skills, 2 MCP servers
 
 python3 -m unittest discover -s tools/tests -t . -v    # tools suite (repo root)
 (cd mcp-server && uv run --extra dev pytest -q)        # server suite (subshell)

@@ -866,7 +866,7 @@ class TestReadmeLayoutMatchesDisk(unittest.TestCase):
     def test_every_skill_directory_is_in_the_layout_tree(self):
         tree = self._layout_block()
         skills = sorted(p.name for p in SKILLS.iterdir() if (p / "SKILL.md").is_file())
-        self.assertEqual(len(skills), 10)
+        self.assertEqual(len(skills), 11)
         missing = [s for s in skills if f"{s}/SKILL.md" not in tree]
         self.assertEqual(missing, [], f"skills absent from README layout: {missing}")
 
@@ -1160,9 +1160,9 @@ class TestWritingEditorialsSkill(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"competitive-programming:{self.SKILL}", readme,
                       "the README component table has no row for this skill")
-        self.assertIn("ten skills", readme,
+        self.assertIn("eleven skills", readme,
                       "the README intro still counts the skills without this one")
-        self.assertIn("10 skills, 2 MCP servers", readme,
+        self.assertIn("11 skills, 2 MCP servers", readme,
                       "the README's `claude plugin details` expectation counts "
                       "fewer skills than are on disk")
 
@@ -1190,10 +1190,19 @@ class TestPreferencesDocs(unittest.TestCase):
     than against a list retyped in this module.
     """
 
-    # The skills that carry a Bootstrap block. `writing-statements` is the
-    # sixth setter skill and has no such block at all — it neither `cd`s to
-    # `$PLUGIN_ROOT` nor runs a `tools/` module — so there is nothing there to
-    # add the line to, and inventing a block for it is not this pin's call.
+    # The skills whose Bootstrap block reads preferences. `writing-statements`
+    # is the sixth setter skill and has no such block at all — it neither
+    # `cd`s to `$PLUGIN_ROOT` nor runs a `tools/` module — so there is nothing
+    # there to add the line to, and inventing a block for it is not this pin's
+    # call.
+    #
+    # `calculating-difficulties` is the other way round and is deliberately
+    # absent: it *has* a Bootstrap block, because it `cd`s to `$PLUGIN_ROOT`
+    # and runs `tools.package_status` for its gate, but it reads no key of
+    # `preferences.toml` — the estimate is for the full-constraint problem as
+    # a single all-or-nothing task, so neither `format.default` nor
+    # `subtasks.policy` moves it. A `PREFS` line there would load config the
+    # skill never consults. Give it one the moment it grows a real key.
     BOOTSTRAP_SKILLS = ("creating-problems", "shaping-problems",
                         "preparing-tests", "reviewing-problems",
                         "validating-solutions", "uploading-to-polygon")

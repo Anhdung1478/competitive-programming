@@ -66,6 +66,14 @@ CF-style tags (`data structures`, `greedy`, …) and use them unless they
 override, but do not block the page on tags. English unless the user asked
 for Vietnamese.
 
+**If `$PROBLEM/difficulty.md` exists, that number is the one to use** — copy
+it, say in the chat reply that it came from there, and do not re-estimate.
+`calculating-difficulties` wrote it by placing the problem against real rated
+anchors under a blind-calibrated rubric, and a second free-hand estimate
+sitting beside it is a contradiction with no tiebreaker. If that file says
+`not estimable`, leave the `Difficulty` field for the user to fill rather than
+substituting a guess for the estimate the other skill declined to make.
+
 ## Output
 
 ```text

@@ -18,3 +18,8 @@ __pycache__/
 # Staging directories run_matrix.py creates next to a problem package.
 # Removed on exit; this catches the ones a hard kill leaves behind.
 .run_matrix_stage_*/
+
+# Codeforces statement cache that
+# skills/calculating-difficulties/calibration/fetch-corpus.py writes here.
+# Only a calibration round touches it; the skill itself never fetches.
+.cache-cf-corpus/
