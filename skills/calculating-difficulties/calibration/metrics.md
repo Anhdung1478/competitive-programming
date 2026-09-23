@@ -535,7 +535,7 @@ estimating agent never acts on. The reasoning it carried is kept here.
 ### Measurement conditions
 
 The blind agents derived each intended solution from the statement alone. At runtime the
-skill reads a Step 1-validated implementation instead, so every figure in this file was
+skill reads an implementation the invocation matrix validated instead, so every figure in this file was
 measured under harder conditions than the skill normally works in — likely pessimistic, but
 by an unmeasured amount.
 
@@ -1173,7 +1173,7 @@ measures them together. The changes shipped between rounds 7 and 9A are listed u
 | Pass B: a `1100` floor caps the reachable estimate near `2200` and is reported as a lower bound | moved from `Calibration status`, which the agent reads after answering, into the pass that fires | wording, no arithmetic |
 | `## The procedure at a glance`: a seven-row map at the top; row C says anchors are selected on printed ratings and compared on their Pass C.1 today ratings, so the map cannot be read as C.1 never reaching the estimate | 2,900 words with no overview; the map gives the passes an order and one binding rule each | changes what the agent reads first; unmeasured |
 | "What the number means": the placement range is about `1100` to `2900`; `Confidence` names a floor ≥ `2100` or a placement ≥ `2500` in the template's own words; "It is a comparability figure" became "The number is" | the anchor table spans `1100`-`2600` and the top three floor rows have no anchor; the description advertises `800`-`3500` | `Confidence` text only |
-| Gate: proof is a Step 1 `PASS` in this session, the user's word, or a validated full-scope AC in the manifest | `validate-solution` writes no file, so a standalone Step 8a had nothing to check | affects whether an estimate is produced, not its value |
+| Gate: proof is `python3 -m tools.package_status "$PROBLEM"` printing `[x] matrix` with `holes 0, mismatches 0` while the `@tag main` solution declares `OK` for every group in its `@expect`, or the user's word that `validating-solutions` ran the matrix clean in this session; a stale `invocation.json` or any hole is rejected | the status tool is the plugin's own machine-readable evidence, the one the other setter skills already gate on; an `invocation.json` that exists but is stale, or reports holes, says nothing about the code now being rated | affects whether an estimate is produced, not its value |
 | Pass C: the round-6 story cut to three sentences; `33 points` corrected to `42` | the figure contradicted `anchors.md` and this file | wording |
 | `Calibration status` cut to the table and one paragraph; figures removed from Pass E, the template and `README.md`; the section says its figures predate the wording listed here and points at this table | five copies of the round figures, one already stale; the old "measures exactly the configuration shipped here" claim was no longer true | changes what the agent reads; unmeasured |
 | Template: the coverage sentence and the `Source:` line carry no figures | same | output prose only |

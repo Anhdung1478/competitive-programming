@@ -20,14 +20,17 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
+import shutil
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
 from tools import bootstrap_testlib, box_pool, preferences, problem_meta, run_matrix
 from tools.matrix_core import _SEVERITY
-from tools.package_status import PHASE_ORDER
+from tools.package_status import PHASE_ORDER, _matrix
 from tools.problem_meta import FORMAT_VALUES
 from tools.scan_solutions import TAGS as SOLUTION_ZOO_TAGS
 from tools.scan_solutions import VERDICTS
@@ -1177,6 +1180,238 @@ class TestWritingEditorialsSkill(unittest.TestCase):
                     "editorial", description,
                     "the plugin description enumerates every skill but this "
                     "one, so the marketplace listing undersells the plugin")
+
+
+class TestCalculatingDifficultiesSkill(unittest.TestCase):
+    """`calculating-difficulties` is opt-in like `writing-editorials`, and it
+    is worse off: its output is read by that other opt-in skill, so a break
+    in either half of the handoff is discovered by nobody.
+
+    Three things in it are claims about files beside it rather than prose.
+    The output template's `Anchor placement` rows cite anchors by id with
+    their printed rating, year and today rating; a reader copies that shape,
+    so a template row whose anchor has left `anchors.md`, or whose today
+    rating disagrees with Pass C.1's own discount table, teaches the wrong
+    arithmetic by example. The gate quotes `package_status`'s matrix detail
+    strings verbatim and tells the agent which to accept and which to
+    reject — a detail reworded in the tool and not here turns the accept
+    string into one nothing prints, and every package reads `not
+    estimable`. And the `not estimable` handoff is spelled in two skills
+    that load independently, which is exactly the duplication
+    `TestReachingCheckRecipeDoesNotDrift` exists for.
+    """
+
+    SKILL = "calculating-difficulties"
+    DIR = SKILLS / SKILL
+    ANCHORS = DIR / "references" / "anchors.md"
+
+    # An anchor id is a Codeforces contest number plus a problem index, which
+    # may carry a digit (`1867E1`). Anything else in the first cell is the
+    # header or the separator row, not an anchor.
+    _ANCHOR_ID = re.compile(r"^\d+[A-Z]\d?$")
+
+    def body(self) -> str:
+        text = skill_text(self.SKILL)
+        # Extractor guard: a truncated read would make every "names X"
+        # assertion below fail for the wrong reason, or a "no row missing"
+        # loop pass over nothing.
+        self.assertGreater(len(text), 4000,
+                           f"{self.SKILL}/SKILL.md read back nearly empty")
+        return text
+
+    def section(self, heading: str, text: str | None = None) -> str:
+        """The body under `heading`, up to the next `## ` heading.
+
+        Not up to any `#`: the output template and the failure branch are
+        fenced Markdown documents whose own `# Estimated difficulty` would
+        otherwise end the section inside its fence.
+        """
+        text = self.body() if text is None else text
+        match = re.search(rf"^{re.escape(heading)}\n(.*?)(?=^## |\Z)", text,
+                          re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(match, f"{self.SKILL} has no {heading!r} section")
+        return match.group(1)
+
+    @staticmethod
+    def table_rows(text: str) -> list[list[str]]:
+        """Every body row of every pipe table in `text`, cells stripped.
+
+        The header row is kept (callers filter on content), the `|---|`
+        separator is not.
+        """
+        rows = []
+        for line in text.splitlines():
+            if not line.startswith("|") or re.match(r"^\|[\s|:-]+\|$", line):
+                continue
+            rows.append([c.strip() for c in line.strip().strip("|").split("|")])
+        return rows
+
+    def anchors(self) -> dict[str, tuple[int, int]]:
+        """`anchors.md` as {id: (printed rating, year)}."""
+        out: dict[str, tuple[int, int]] = {}
+        for cells in self.table_rows(self.ANCHORS.read_text(encoding="utf-8")):
+            if self._ANCHOR_ID.match(cells[0]):
+                out[cells[0]] = (int(cells[1]), int(cells[2]))
+        return out
+
+    def era_discount(self) -> list[tuple[int, int, int]]:
+        """Pass C.1's table as (first year, last year, discount) triples.
+
+        Parsed from the skill rather than retyped, so this test checks the
+        template against the table the reader is actually told to use.
+        `2018 or earlier` is open below; no anchor predates Codeforces.
+        """
+        spans = []
+        for cells in self.table_rows(self.section("## Pass C.1 — era correction")):
+            years = re.fullmatch(r"(\d{4})-(\d{4})", cells[0])
+            earlier = re.fullmatch(r"(\d{4}) or earlier", cells[0])
+            discount = re.fullmatch(r"`(-?\d+)`", cells[1])
+            if discount is None or not (years or earlier):
+                continue
+            lo, hi = ((int(years[1]), int(years[2])) if years
+                      else (0, int(earlier[1])))
+            spans.append((lo, hi, int(discount[1])))
+        self.assertGreaterEqual(len(spans), 4,
+                                "the Pass C.1 discount table did not parse")
+        return spans
+
+    def discount_for(self, year: int) -> int:
+        hits = [d for lo, hi, d in self.era_discount() if lo <= year <= hi]
+        self.assertEqual(len(hits), 1,
+                         f"Pass C.1 gives {len(hits)} discounts for {year}; "
+                         f"a year has to fall in exactly one row")
+        return hits[0]
+
+    def test_the_frontmatter_name_matches_the_directory(self):
+        match = re.match(r"---\n(.*?)\n---\n", self.body(), re.DOTALL)
+        self.assertIsNotNone(match, f"{self.SKILL}/SKILL.md has no frontmatter")
+        name = re.search(r"^name:\s*(\S+)\s*$", match.group(1), re.MULTILINE)
+        self.assertIsNotNone(name, "the frontmatter has no `name:` key")
+        self.assertEqual(name.group(1), self.DIR.name)
+
+    def test_every_anchor_row_parses_and_no_id_repeats(self):
+        # Pass C reads this table by eye and `calibration/retrodict.py` by
+        # parser. A row that parses for neither — a stray cell, a rating off
+        # the 100-step grid, a year Codeforces never held — is an anchor the
+        # placement silently cannot use, and a repeated id is two labels for
+        # one problem with no rule for which to believe.
+        text = self.ANCHORS.read_text(encoding="utf-8")
+        ids = []
+        for cells in self.table_rows(text):
+            if not self._ANCHOR_ID.match(cells[0]):
+                self.assertIn(cells[0], ("id",),
+                              f"an anchors.md row has no parseable id: {cells}")
+                continue
+            ids.append(cells[0])
+            with self.subTest(anchor=cells[0]):
+                self.assertTrue(re.fullmatch(r"\d+", cells[1]),
+                                f"rating cell is not an integer: {cells[1]!r}")
+                self.assertTrue(re.fullmatch(r"\d{4}", cells[2]),
+                                f"year cell is not a year: {cells[2]!r}")
+                rating, year = int(cells[1]), int(cells[2])
+                self.assertTrue(800 <= rating <= 3500 and rating % 100 == 0,
+                                f"{rating} is not a Codeforces rating")
+                self.assertTrue(2010 <= year <= 2026,
+                                f"{year} is not a plausible round year")
+        self.assertGreater(len(ids), 100, "anchors.md read back nearly empty")
+        repeated = sorted({i for i in ids if ids.count(i) > 1})
+        self.assertFalse(repeated, f"anchors.md lists {repeated} more than once")
+
+    def test_the_template_anchor_rows_are_real_anchors_era_corrected(self):
+        # The template is a worked example, and a worked example is copied
+        # more faithfully than a rule is read. Every row has to be an anchor
+        # that exists, with its real printed rating and year, and a today
+        # column that is Pass C.1's formula applied to them — otherwise the
+        # example teaches a correction the skill does not make.
+        anchors = self.anchors()
+        template = self.section("## Anchor placement")
+        rows = [c for c in self.table_rows(template)
+                if self._ANCHOR_ID.match(c[0])]
+        self.assertGreaterEqual(len(rows), 2,
+                                "the template's anchor table did not parse")
+        for cells in rows:
+            anchor, printed, year, today = cells[0], *map(int, cells[1:4])
+            with self.subTest(anchor=anchor):
+                self.assertIn(anchor, anchors,
+                              f"the template cites {anchor}, which is not in "
+                              f"references/anchors.md")
+                self.assertEqual((printed, year), anchors[anchor],
+                                 f"the template's printed rating or year for "
+                                 f"{anchor} disagrees with anchors.md")
+                self.assertEqual(
+                    today, printed + self.discount_for(year),
+                    f"{anchor}: today {today} is not printed {printed} "
+                    f"corrected by Pass C.1's discount for {year}")
+
+    def test_the_gate_quotes_the_matrix_details_package_status_prints(self):
+        # Driven through `_matrix` on a real fixture rather than grepped out
+        # of its source: what matters is the string a reader will see, and a
+        # detail assembled from an f-string is not in the source verbatim.
+        # Fixture and staleness mechanics are `test_package_status`'s.
+        fixture = Path(__file__).parent / "fixtures" / "mini"
+        details = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "p"
+            shutil.copytree(fixture, d, ignore=shutil.ignore_patterns(
+                ".build", "invocation.json", "solutions.json", "flags.json",
+                "*.a"))
+
+            def matrix(holes):
+                (d / "invocation.json").write_text(
+                    json.dumps({"schema": 1, "holes": holes,
+                                "mismatches": []}), encoding="utf-8")
+                return _matrix(d, problem_meta.load(d / "problem.json"))
+
+            clean = matrix([])
+            self.assertTrue(clean.done)
+            details["accept"] = clean.detail
+            holed = matrix([{"solution": "x", "group": "g1"}] * 2)
+            self.assertFalse(holed.done)
+            details["holes"] = holed.detail
+            self.assertTrue(matrix([]).done)
+            later = (d / "invocation.json").stat().st_mtime + 10
+            os.utime(d / "problem.json", (later, later))
+            stale = _matrix(d, problem_meta.load(d / "problem.json"))
+            self.assertFalse(stale.done)
+            details["stale"] = stale.detail.split(":")[0] + ":"
+
+        gate = flatten(self.section("## Gate: is this estimable at all?"))
+        self.assertEqual(details["accept"], "holes 0, mismatches 0")
+        self.assertTrue(f"`{details['accept']}`" in gate,
+                        "the gate no longer accepts the exact clean detail "
+                        "package_status prints")
+        self.assertTrue(f"[ ] matrix {details['holes']}" in gate,
+                        f"the gate's rejected-holes example is not the "
+                        f"detail package_status prints: {details['holes']!r}")
+        self.assertTrue(f"[ ] matrix {details['stale']}" in gate,
+                        f"the gate's rejected-stale example is not the "
+                        f"detail package_status prints: {details['stale']!r}")
+        self.assertTrue("`[x] matrix`" in gate,
+                        "the gate no longer names the done checkbox")
+        self.assertIn('python3 -m tools.package_status "$PROBLEM"',
+                      self.body())
+
+    def test_both_skills_agree_on_the_difficulty_handoff(self):
+        # `writing-editorials` copies the number out of `difficulty.md` and
+        # leaves its field blank on `not estimable`. Rename the file or the
+        # sentinel on one side and the other side keeps looking for the old
+        # one: the editorial re-estimates free-hand, or copies the words
+        # "not estimable" into a rating field.
+        mine = self.body()
+        editorials = skill_text("writing-editorials")
+        # The editorial side is held to the bare filename: it resolves the
+        # path from its own `$PROBLEM`, and the name is what has to agree.
+        for needle, theirs in (("$PROBLEM/difficulty.md", "difficulty.md"),
+                               ("not estimable", "not estimable")):
+            with self.subTest(needle=needle):
+                self.assertTrue(needle in mine,
+                                f"{self.SKILL} no longer names {needle!r}")
+                self.assertTrue(theirs in editorials,
+                                f"writing-editorials no longer names "
+                                f"{theirs!r}, so it stops reading what "
+                                f"{self.SKILL} writes")
+        self.assertIn("**Expected rating: not estimable**",
+                      self.section("## Failure branch"))
 
 
 class TestPreferencesDocs(unittest.TestCase):

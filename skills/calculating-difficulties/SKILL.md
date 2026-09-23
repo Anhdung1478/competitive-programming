@@ -18,7 +18,8 @@ problem in a modern Div1/Div2 round, together with the anchors and the
 arithmetic that produced it. Nothing else in the package changes.
 
 The skill is **opt-in and detached**: not a phase of the setting
-pipeline, no gate to satisfy, nothing downstream waiting on it. What
+pipeline, a gate for no other skill, nothing downstream waiting on it
+(its own `Gate` below decides only whether it estimates at all). What
 does read it is `writing-editorials`, which otherwise invents a rating
 on the spot for the page's `Difficulty` field and its
 `<!-- EXPECTED_RATING -->` slot. When `difficulty.md` exists, that
